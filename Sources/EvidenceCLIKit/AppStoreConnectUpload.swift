@@ -158,7 +158,7 @@ public struct LocalScreenshot: Equatable {
     public var slot: Int
     public var width: Int
     public var height: Int
-    public var sha256: String
+    public var sourceFileChecksum: String
     public var fileSize: Int
 
     public var fileName: String {
@@ -218,7 +218,7 @@ public struct ScreenshotUploadPlanner {
                 slot: parsed.slot,
                 width: dimensions.width,
                 height: dimensions.height,
-                sha256: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(),
+                sourceFileChecksum: Insecure.MD5.hash(data: data).map { String(format: "%02x", $0) }.joined(),
                 fileSize: data.count
             ))
         }
@@ -257,7 +257,7 @@ public enum AppStoreScreenshotDisplayType {
         "5.5": "APP_IPHONE_55",
         "ipad-13": "APP_IPAD_PRO_3GEN_129",
         "ipad-12.9": "APP_IPAD_PRO_3GEN_129",
-        "ipad-11": "APP_IPAD_PRO_11"
+        "ipad-11": "APP_IPAD_PRO_3GEN_11"
     ]
 }
 
@@ -299,7 +299,7 @@ public struct UploadPlan: Equatable {
     public init(screenshot: LocalScreenshot, remote: RemoteScreenshot?) {
         self.screenshot = screenshot
         self.remoteID = remote?.id
-        if let remote, remote.checksum == screenshot.sha256 {
+        if let remote, remote.checksum == screenshot.sourceFileChecksum {
             self.action = .skip
         } else if remote != nil {
             self.action = .replace
@@ -414,7 +414,7 @@ public struct AppStoreConnectClient {
                     ?? displayTypeForScreenshot(item: item, sets: data)
                     ?? ""
                 let slot = attributes["sortOrder"] as? Int ?? ScreenshotUploadPlanner.slot(fromPublicFileName: fileName)
-                let checksum = attributes["sourceFileChecksum"] as? String ?? attributes["sha256"] as? String
+                let checksum = attributes["sourceFileChecksum"] as? String
                 state.screenshots.append(RemoteScreenshot(
                     id: id,
                     locale: locale,
@@ -482,7 +482,10 @@ public struct AppStoreConnectClient {
             "data": [
                 "type": "appScreenshots",
                 "id": screenshotID,
-                "attributes": ["uploaded": true]
+                "attributes": [
+                    "uploaded": true,
+                    "sourceFileChecksum": screenshot.sourceFileChecksum
+                ]
             ]
         ])
     }

@@ -309,7 +309,7 @@ final class EvidenceCLIKitTests: XCTestCase {
     func testUploadScreenshotsDryRunListsHashMatchesWithoutMutating() throws {
         let directory = try appStoreProject()
         let image = try writeAppStorePNG(in: directory, path: "docs/build-evidence/en-US/6.9/01-home.png", width: 1290, height: 2796)
-        let checksum = SHA256.hash(data: image).map { String(format: "%02x", $0) }.joined()
+        let checksum = Insecure.MD5.hash(data: image).map { String(format: "%02x", $0) }.joined()
         let http = MockHTTPClient(responses: [
             .json(appStoreVersionsJSON(localizationID: "loc-en", locale: "en-US")),
             .json(screenshotSetsJSON(setID: "set-67", displayType: "APP_IPHONE_67", screenshotID: "shot-1", checksum: checksum))
@@ -342,6 +342,10 @@ final class EvidenceCLIKitTests: XCTestCase {
         XCTAssertEqual(http.requests.count, 0)
     }
 
+    func testUploadScreenshotsMapsIPadElevenToAppStoreDisplayType() throws {
+        XCTAssertEqual(AppStoreScreenshotDisplayType.targetMap["ipad-11"], "APP_IPAD_PRO_3GEN_11")
+    }
+
     func testUploadScreenshotsFiltersLocaleLayout() throws {
         let directory = try appStoreProject()
         _ = try writeAppStorePNG(in: directory, path: "docs/build-evidence/en-US/6.9/01-home.png", width: 1290, height: 2796)
@@ -365,6 +369,7 @@ final class EvidenceCLIKitTests: XCTestCase {
     func testUploadScreenshotsPerformsReplaceWithResumableUploadOperations() throws {
         let directory = try appStoreProject()
         let image = try writeAppStorePNG(in: directory, path: "docs/build-evidence/en-US/6.9/01-home.png", width: 1290, height: 2796)
+        let checksum = Insecure.MD5.hash(data: image).map { String(format: "%02x", $0) }.joined()
         let http = MockHTTPClient(responses: [
             .json(appStoreVersionsJSON(localizationID: "loc-en", locale: "en-US")),
             .json(screenshotSetsJSON(setID: "set-67", displayType: "APP_IPHONE_67", screenshotID: "old-shot", checksum: "different")),
@@ -381,6 +386,12 @@ final class EvidenceCLIKitTests: XCTestCase {
         XCTAssertEqual(http.requests.map(\.method), ["GET", "GET", "DELETE", "POST", "PUT", "PATCH"])
         XCTAssertEqual(http.requests[4].url.absoluteString, "https://uploads.example.com/part")
         XCTAssertEqual(http.requests[4].body, image)
+        let patchBody = try XCTUnwrap(http.requests[5].body)
+        let patchJSON = try XCTUnwrap(try JSONSerialization.jsonObject(with: patchBody) as? [String: Any])
+        let data = try XCTUnwrap(patchJSON["data"] as? [String: Any])
+        let attributes = try XCTUnwrap(data["attributes"] as? [String: Any])
+        XCTAssertEqual(attributes["uploaded"] as? Bool, true)
+        XCTAssertEqual(attributes["sourceFileChecksum"] as? String, checksum)
         XCTAssertTrue(output.joined(separator: "\n").contains("Uploaded en-US/APP_IPHONE_67/01-home.png"))
     }
 
