@@ -296,6 +296,7 @@ Marketplace listing: <https://github.com/marketplace/actions/evidence>. The Acti
 
 - `docs/troubleshooting.md` covers common simulator, permissions, dependency, and output-path problems.
 - `docs/versioning.md` describes the v0.x stability policy and release-note expectations.
+- `docs/launch/README.md` contains public launch materials: blog draft, social posts, demo script, HN draft, and checklist.
 - `CONTRIBUTING.md` explains how to report issues and open pull requests safely in a public repository.
 - `Examples/README.md` describes the shipped GitHub Action examples and fixture project.
 

@@ -1,0 +1,38 @@
+# 60-second terminal capture script
+
+Use this as the narration/script for a short terminal recording. It is written so the capture can be produced with any screen recorder or terminal GIF tool.
+
+Target length: 55-60 seconds.
+
+```sh
+# 0s - show the project and help surface
+git clone https://github.com/sunnypurewal/evidence.git
+cd evidence
+swift run evidence -- --help
+
+# 12s - show the app-owned config model
+sed -n '1,80p' README.md
+
+# 22s - show the screenshot-plan API
+sed -n '1,120p' Sources/Evidence/ScreenshotPlan.swift
+
+# 34s - show visual diff support
+swift run evidence -- diff --help
+
+# 44s - show App Store upload planning
+swift run evidence -- upload-screenshots --help
+
+# 54s - show CI adoption path
+sed -n '1,120p' Examples/workflows/capture-evidence-on-pr.yml
+```
+
+## Caption
+
+`evidence` turns real iOS app flows into repeatable release proof: screenshots, build evidence, visual diffs, and App Store screenshot upload plans from one open-source Swift package and CLI.
+
+## Checklist for recording
+
+- Use a clean terminal theme with 14-16pt monospace text.
+- Keep the window around 120 columns wide so README and help output wrap cleanly.
+- Pause briefly after each command so viewers can read the headline.
+- End on the GitHub Action example so the call to action is concrete.
