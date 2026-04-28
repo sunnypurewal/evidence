@@ -1,0 +1,35 @@
+name: Capture App Store screenshots on tag
+
+# Drop this file into your iOS app repo at .github/workflows/capture-screenshots.yml.
+# When you push a release tag (vX.Y.Z), the workflow runs the configured
+# capture-screenshots UI test plan, then uploads the screenshots as a release
+# artifact ready for App Store Connect.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  capture-screenshots:
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - name: Check out app code
+        uses: actions/checkout@v4
+
+      - name: Capture App Store screenshots
+        uses: sunnypurewal/evidence@v0
+        with:
+          subcommand: capture-screenshots
+          simulator: 'iPhone 16 Pro Max'
+          # Persist artifacts to a directory the upload step can pick up.
+          output-dir: appstore-screenshots
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: appstore-screenshots-${{ github.ref_name }}
+          path: appstore-screenshots
+          if-no-files-found: error
