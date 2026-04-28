@@ -42,8 +42,11 @@ public struct EvidenceConfig: Equatable {
         let scheme = try document.requiredString("scheme")
         let bundleID = try document.requiredString("bundle_id")
         let simulatorUDID = try document.requiredString("simulator_udid")
-        let evidenceDirectory = document.string("evidence_dir") ?? "docs/build-evidence"
-        let screenshotTargetNames = document.stringArray("screenshot_targets") ?? ScreenshotTarget.knownAppStoreTargets.map(\.name)
+        let evidenceDirectory = try document.optionalString("evidence_dir", default: "docs/build-evidence", allowEmpty: false) ?? "docs/build-evidence"
+        let screenshotTargetNames = try document.optionalStringArray(
+            "screenshot_targets",
+            default: ScreenshotTarget.knownAppStoreTargets.map(\.name)
+        ) ?? ScreenshotTarget.knownAppStoreTargets.map(\.name)
         let screenshotTargets = try screenshotTargetNames.map { name in
             guard let target = ScreenshotTarget(named: name) else {
                 throw CLIError.config("Invalid field 'screenshot_targets': unknown target '\(name)'. Known targets: \(ScreenshotTarget.knownAppStoreTargets.map(\.name).joined(separator: ", ")).")
@@ -57,16 +60,16 @@ public struct EvidenceConfig: Equatable {
             simulatorUDID: simulatorUDID,
             evidenceDirectory: evidenceDirectory,
             screenshotTargets: screenshotTargets,
-            previewTargets: document.stringArray("preview_targets") ?? ["app-preview"],
-            deviceMatrix: document.stringArray("device_matrix") ?? [],
-            repositoryRawBaseURL: document.string("repository_raw_base_url"),
+            previewTargets: try document.optionalStringArray("preview_targets", default: ["app-preview"]) ?? ["app-preview"],
+            deviceMatrix: try document.optionalStringArray("device_matrix", default: []) ?? [],
+            repositoryRawBaseURL: try document.optionalString("repository_raw_base_url", allowEmpty: false),
             previewDefaults: PreviewDefaults(
-                width: document.int("preview_width") ?? 886,
-                height: document.int("preview_height") ?? 1920,
-                fps: document.int("preview_fps") ?? 30,
-                maxDuration: document.double("preview_max_duration_seconds") ?? 30,
-                trimStart: document.double("preview_trim_start") ?? 0,
-                trimEnd: document.double("preview_trim_end")
+                width: try document.optionalInt("preview_width", default: 886, minimum: 1) ?? 886,
+                height: try document.optionalInt("preview_height", default: 1920, minimum: 1) ?? 1920,
+                fps: try document.optionalInt("preview_fps", default: 30, minimum: 1) ?? 30,
+                maxDuration: try document.optionalDouble("preview_max_duration_seconds", default: 30, minimum: 0.1) ?? 30,
+                trimStart: try document.optionalDouble("preview_trim_start", default: 0, minimum: 0) ?? 0,
+                trimEnd: try document.optionalDouble("preview_trim_end", minimum: 0)
             )
         )
     }

@@ -44,6 +44,38 @@ final class EvidenceCLIKitTests: XCTestCase {
         XCTAssertEqual(config.previewDefaults, PreviewDefaults(width: 886, height: 1920, fps: 30, maxDuration: 28))
     }
 
+    func testConfigParsingRejectsInvalidOptionalFieldTypes() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        preview_width = "wide"
+        """)
+
+        XCTAssertThrowsError(try EvidenceConfig.parse(document)) { error in
+            XCTAssertEqual(
+                error as? CLIError,
+                .config("Invalid field 'preview_width': expected integer.")
+            )
+        }
+    }
+
+    func testConfigParsingRejectsInvalidOptionalFieldValues() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        preview_fps = 0
+        """)
+
+        XCTAssertThrowsError(try EvidenceConfig.parse(document)) { error in
+            XCTAssertEqual(
+                error as? CLIError,
+                .config("Invalid field 'preview_fps': expected value >= 1.")
+            )
+        }
+    }
+
     func testHelpDoesNotRequireConfig() throws {
         var output: [String] = []
         let cli = EvidenceCLI(stdout: { output.append($0) }, currentDirectory: temporaryDirectory())
