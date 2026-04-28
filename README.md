@@ -48,3 +48,29 @@ The `evidence` executable target is included as the home for the companion CLI. 
 swift test
 swift run evidence
 ```
+
+## CLI
+
+Create a `.evidence.toml` file in the project that will run evidence workflows:
+
+```toml
+scheme = "ExampleApp"
+bundle_id = "com.example.app"
+simulator_udid = "YOUR-SIMULATOR-UDID"
+evidence_dir = "docs/build-evidence"
+screenshot_targets = ["6.9", "6.5", "6.1", "5.5", "ipad-13"]
+preview_targets = ["app-preview"]
+device_matrix = ["iPhone 16 Pro Max"]
+```
+
+Then run the command that matches the workflow:
+
+```sh
+evidence capture-screenshots
+evidence capture-evidence --ticket APP-123
+evidence resize --input raw.png --target 6.9 --output app-store.png
+evidence record-preview --input capture.mov --output preview.mp4 --trim-start 0 --trim-end 30
+evidence render-marketing --scene scene.svg --output scene.png
+```
+
+The CLI wraps Xcode simulator tooling, ImageMagick, and ffmpeg with explicit checks so missing local dependencies fail with actionable messages.
