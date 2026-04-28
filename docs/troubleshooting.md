@@ -54,3 +54,15 @@ simulator_udid = "YOUR-SIMULATOR-UDID"
 ```
 
 Validation errors name the field that needs attention. Keep app-specific bundle IDs, schemes, and generated artifacts in the consuming app repository.
+
+## Nested Xcode Workspace Or Project
+
+If `evidence capture-screenshots` runs from a directory above the Xcode workspace (for example, `.evidence.toml` lives at the repo root and the iOS project is in `ios/`), `xcodebuild` cannot find the scheme on its own and the run fails. Tell the CLI which workspace or project to use by setting one of:
+
+```toml
+xcode_workspace = "ios/MyApp.xcworkspace"
+# or
+xcode_project = "ios/MyApp.xcodeproj"
+```
+
+Set at most one of the two — `evidence` forwards the value to `xcodebuild` as `-workspace` or `-project`. Setting both is rejected at config-load time.

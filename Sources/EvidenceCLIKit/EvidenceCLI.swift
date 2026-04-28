@@ -83,11 +83,16 @@ public struct EvidenceCLI {
     private func captureScreenshots(config: EvidenceConfig) throws {
         try requireTool(toolPaths.xcrun, versionArguments: ["simctl", "help"], installHint: "Install Xcode and command line tools.")
 
-        var arguments = [
-            "test",
+        var arguments: [String] = ["test"]
+        if let workspace = config.xcodeWorkspace {
+            arguments.append(contentsOf: ["-workspace", workspace])
+        } else if let project = config.xcodeProject {
+            arguments.append(contentsOf: ["-project", project])
+        }
+        arguments.append(contentsOf: [
             "-scheme", config.scheme,
             "-destination", "platform=iOS Simulator,id=\(config.simulatorUDID)"
-        ]
+        ])
         if !config.deviceMatrix.isEmpty {
             arguments.append(contentsOf: ["-only-testing", config.deviceMatrix.joined(separator: ",")])
         }

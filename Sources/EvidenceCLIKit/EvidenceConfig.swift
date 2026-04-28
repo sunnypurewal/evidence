@@ -9,6 +9,8 @@ public struct EvidenceConfig: Equatable {
     public var previewTargets: [String]
     public var deviceMatrix: [String]
     public var repositoryRawBaseURL: String?
+    public var xcodeWorkspace: String?
+    public var xcodeProject: String?
     public var previewDefaults: PreviewDefaults
 
     public init(
@@ -20,6 +22,8 @@ public struct EvidenceConfig: Equatable {
         previewTargets: [String] = ["app-preview"],
         deviceMatrix: [String] = [],
         repositoryRawBaseURL: String? = nil,
+        xcodeWorkspace: String? = nil,
+        xcodeProject: String? = nil,
         previewDefaults: PreviewDefaults = PreviewDefaults()
     ) {
         self.scheme = scheme
@@ -30,6 +34,8 @@ public struct EvidenceConfig: Equatable {
         self.previewTargets = previewTargets
         self.deviceMatrix = deviceMatrix
         self.repositoryRawBaseURL = repositoryRawBaseURL
+        self.xcodeWorkspace = xcodeWorkspace
+        self.xcodeProject = xcodeProject
         self.previewDefaults = previewDefaults
     }
 
@@ -54,6 +60,12 @@ public struct EvidenceConfig: Equatable {
             return target
         }
 
+        let xcodeWorkspace = try document.optionalString("xcode_workspace", allowEmpty: false)
+        let xcodeProject = try document.optionalString("xcode_project", allowEmpty: false)
+        if xcodeWorkspace != nil, xcodeProject != nil {
+            throw CLIError.config("Invalid configuration: only one of 'xcode_workspace' or 'xcode_project' may be set in .evidence.toml.")
+        }
+
         return EvidenceConfig(
             scheme: scheme,
             bundleID: bundleID,
@@ -63,6 +75,8 @@ public struct EvidenceConfig: Equatable {
             previewTargets: try document.optionalStringArray("preview_targets", default: ["app-preview"]) ?? ["app-preview"],
             deviceMatrix: try document.optionalStringArray("device_matrix", default: []) ?? [],
             repositoryRawBaseURL: try document.optionalString("repository_raw_base_url", allowEmpty: false),
+            xcodeWorkspace: xcodeWorkspace,
+            xcodeProject: xcodeProject,
             previewDefaults: PreviewDefaults(
                 width: try document.optionalInt("preview_width", default: 886, minimum: 1) ?? 886,
                 height: try document.optionalInt("preview_height", default: 1920, minimum: 1) ?? 1920,

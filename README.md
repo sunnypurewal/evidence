@@ -97,6 +97,15 @@ preview_targets = ["app-preview"]
 device_matrix = ["iPhone 16 Pro Max"]
 ```
 
+If the Xcode workspace or project that owns the screenshot UI tests is not at the directory where `evidence capture-screenshots` runs (for example, the iOS project lives in `ios/` while `.evidence.toml` lives at the repo root), set one of the optional fields below. The value is forwarded to `xcodebuild` as `-workspace` or `-project`. Set at most one:
+
+```toml
+# Either:
+xcode_workspace = "ios/MyApp.xcworkspace"
+# Or:
+xcode_project = "ios/MyApp.xcodeproj"
+```
+
 Run the command that matches the workflow:
 
 ```sh

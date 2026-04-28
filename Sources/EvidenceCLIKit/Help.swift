@@ -31,6 +31,14 @@ public enum Help {
     Requires .evidence.toml fields:
       scheme, bundle_id, simulator_udid
 
+    Optional .evidence.toml fields for apps whose Xcode workspace or project is
+    not at the directory where `evidence` runs:
+      xcode_workspace = "ios/MyApp.xcworkspace"
+      xcode_project   = "ios/MyApp.xcodeproj"
+
+    Set at most one of the two — the value is forwarded to `xcodebuild` as
+    `-workspace` or `-project`.
+
     Example:
       evidence capture-screenshots
     """
