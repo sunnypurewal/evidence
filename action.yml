@@ -18,7 +18,7 @@ inputs:
     required: false
     default: ''
   baseline-dir:
-    description: 'Baseline directory passed to evidence diff (--baseline). Reserved for forthcoming visual diff support.'
+    description: 'Baseline directory passed to evidence diff (--baseline). Defaults to diff_baseline_dir from .evidence.toml when empty.'
     required: false
     default: ''
   output-dir:

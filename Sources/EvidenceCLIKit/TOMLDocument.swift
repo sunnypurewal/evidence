@@ -165,8 +165,29 @@ public struct TOMLDocument: Equatable {
                 return .stringArray([])
             }
 
-            let values = body.split(separator: ",").map {
-                String($0).trimmingCharacters(in: .whitespacesAndNewlines)
+            // Split on commas only when we're outside a quoted string. This
+            // preserves entries like `"0,0,300x60"` that contain commas
+            // inside the quotes — which RIDDIM-22's `diff_ignore_regions`
+            // relies on.
+            var values: [String] = []
+            var current = ""
+            var inQuotes = false
+            for character in body {
+                if character == "\"" {
+                    inQuotes.toggle()
+                    current.append(character)
+                    continue
+                }
+                if character == ",", !inQuotes {
+                    values.append(current.trimmingCharacters(in: .whitespacesAndNewlines))
+                    current = ""
+                    continue
+                }
+                current.append(character)
+            }
+            let tail = current.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !tail.isEmpty {
+                values.append(tail)
             }
             guard values.allSatisfy({ $0.hasPrefix("\"") && $0.hasSuffix("\"") }) else {
                 throw CLIError.config("Invalid field '\(field)' on line \(line): arrays must contain quoted strings.")
