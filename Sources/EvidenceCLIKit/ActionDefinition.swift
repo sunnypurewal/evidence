@@ -78,6 +78,37 @@ public struct ActionDefinitionValidator {
         guard runsBlock.contains("steps:") else {
             throw CLIError.config("action.yml runs block is missing 'steps:'.")
         }
+
+        try rejectSecretsReferences(in: source)
+    }
+
+    /// Rejects any `${{ secrets.* }}` reference anywhere in the manifest.
+    ///
+    /// GitHub Actions evaluates `${{ }}` expressions inside composite-action
+    /// manifests — including in `description` strings — and the `secrets`
+    /// context is not available to composite actions invoked from a workflow.
+    /// A literal `${{ secrets.GITHUB_TOKEN }}` anywhere in `action.yml` causes
+    /// the runner to fail the entire job with an "Unrecognized named-value:
+    /// 'secrets'" error before any step runs. Callers must pass tokens via a
+    /// declared input (e.g. `inputs.github-token`) and wire `secrets.*` from
+    /// the calling workflow.
+    private func rejectSecretsReferences(in source: String) throws {
+        // Match `${{ ... secrets.<NAME> ... }}` (with arbitrary whitespace
+        // around the expression contents). A simple substring scan is enough
+        // because the manifest is small and any literal occurrence is invalid.
+        for line in source.split(separator: "\n", omittingEmptySubsequences: false) {
+            let text = String(line)
+            guard text.contains("${{") else { continue }
+            // Strip whitespace inside `${{ ... }}` so `${{secrets.X}}` and
+            // `${{ secrets.X }}` are both caught.
+            let collapsed = text.replacingOccurrences(of: " ", with: "")
+            if collapsed.contains("${{secrets.") {
+                throw CLIError.config(
+                    "action.yml must not reference 'secrets.*' directly; "
+                        + "declare an input and wire the secret from the calling workflow."
+                )
+            }
+        }
     }
 
     private func requireTopLevelKey(_ key: String, in source: String) throws {

@@ -42,7 +42,7 @@ inputs:
     required: false
     default: 'true'
   github-token:
-    description: 'GitHub token used to post PR comments. Pass ${{ secrets.GITHUB_TOKEN }} to enable the PR comment behaviour.'
+    description: 'GitHub token used to post PR comments. Pass the calling workflow''s GITHUB_TOKEN secret (see the README "Use in CI" section) to enable the PR comment behaviour. Leave empty to skip commenting.'
     required: false
     default: ''
 
