@@ -171,6 +171,112 @@ final class EvidenceCLIKitTests: XCTestCase {
         )
     }
 
+    func testCaptureScreenshotsForwardsWorkspaceFlagToXcodebuild() throws {
+        let directory = try configuredProject(extraLines: [
+            "xcode_workspace = \"ios/Example.xcworkspace\"",
+            "device_matrix = [\"EvidenceUITests/AppEvidenceTests\"]"
+        ])
+        let runner = RecordingRunner()
+        let cli = testCLI(directory: directory, runner: runner)
+
+        try cli.execute(["capture-screenshots"])
+
+        XCTAssertEqual(
+            runner.commands.last?.arguments,
+            [
+                "xcodebuild",
+                "test",
+                "-workspace", "ios/Example.xcworkspace",
+                "-scheme", "Example",
+                "-destination", "platform=iOS Simulator,id=SIM-123",
+                "-only-testing", "EvidenceUITests/AppEvidenceTests"
+            ]
+        )
+    }
+
+    func testCaptureScreenshotsForwardsProjectFlagToXcodebuild() throws {
+        let directory = try configuredProject(extraLines: [
+            "xcode_project = \"ios/Example.xcodeproj\""
+        ])
+        let runner = RecordingRunner()
+        let cli = testCLI(directory: directory, runner: runner)
+
+        try cli.execute(["capture-screenshots"])
+
+        XCTAssertEqual(
+            runner.commands.last?.arguments,
+            [
+                "xcodebuild",
+                "test",
+                "-project", "ios/Example.xcodeproj",
+                "-scheme", "Example",
+                "-destination", "platform=iOS Simulator,id=SIM-123"
+            ]
+        )
+    }
+
+    func testCaptureScreenshotsOmitsWorkspaceFlagWhenUnconfigured() throws {
+        let directory = try configuredProject()
+        let runner = RecordingRunner()
+        let cli = testCLI(directory: directory, runner: runner)
+
+        try cli.execute(["capture-screenshots"])
+
+        XCTAssertEqual(
+            runner.commands.last?.arguments,
+            [
+                "xcodebuild",
+                "test",
+                "-scheme", "Example",
+                "-destination", "platform=iOS Simulator,id=SIM-123"
+            ]
+        )
+    }
+
+    func testConfigParsingRejectsBothXcodeWorkspaceAndProject() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        xcode_workspace = "ios/Example.xcworkspace"
+        xcode_project = "ios/Example.xcodeproj"
+        """)
+
+        XCTAssertThrowsError(try EvidenceConfig.parse(document)) { error in
+            XCTAssertEqual(
+                error as? CLIError,
+                .config("Invalid configuration: only one of 'xcode_workspace' or 'xcode_project' may be set in .evidence.toml.")
+            )
+        }
+    }
+
+    func testConfigParsingReadsXcodeWorkspaceAndRejectsEmpty() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        xcode_workspace = "ios/Example.xcworkspace"
+        """)
+
+        let config = try EvidenceConfig.parse(document)
+        XCTAssertEqual(config.xcodeWorkspace, "ios/Example.xcworkspace")
+        XCTAssertNil(config.xcodeProject)
+
+        let emptyDocument = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        xcode_workspace = ""
+        """)
+
+        XCTAssertThrowsError(try EvidenceConfig.parse(emptyDocument)) { error in
+            XCTAssertEqual(
+                error as? CLIError,
+                .config("Invalid field 'xcode_workspace': value must not be empty.")
+            )
+        }
+    }
+
     func testCaptureEvidenceInfersRawGitHubURLFromOriginRemote() throws {
         let directory = try configuredProject()
         let runner = RecordingRunner(
@@ -188,7 +294,7 @@ final class EvidenceCLIKitTests: XCTestCase {
         )
     }
 
-    private func configuredProject(rawBaseURL: String? = nil) throws -> URL {
+    private func configuredProject(rawBaseURL: String? = nil, extraLines: [String] = []) throws -> URL {
         let directory = temporaryDirectory()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var lines = [
@@ -199,6 +305,7 @@ final class EvidenceCLIKitTests: XCTestCase {
         if let rawBaseURL {
             lines.append("repository_raw_base_url = \"\(rawBaseURL)\"")
         }
+        lines.append(contentsOf: extraLines)
         try lines.joined(separator: "\n").write(
             to: directory.appendingPathComponent(".evidence.toml"),
             atomically: true,
