@@ -1,5 +1,5 @@
 name: 'evidence'
-description: 'Run the evidence CLI on a macOS runner to capture screenshots, build evidence, marketing renders, preview videos, or visual diffs from your iOS app.'
+description: 'Run the evidence CLI on a macOS runner to capture screenshots, build evidence, marketing renders, preview videos, visual diffs, or App Store screenshot uploads from your iOS app.'
 author: 'sunnypurewal'
 branding:
   icon: 'camera'
@@ -7,7 +7,7 @@ branding:
 
 inputs:
   subcommand:
-    description: 'evidence subcommand to run (capture-screenshots, capture-evidence, resize, render-marketing, record-preview, diff, help).'
+    description: 'evidence subcommand to run (capture-screenshots, capture-evidence, resize, render-marketing, record-preview, diff, upload-screenshots, help).'
     required: true
   config:
     description: 'Path to the .evidence.toml config file relative to the consuming repo. Defaults to .evidence.toml in the repo root.'

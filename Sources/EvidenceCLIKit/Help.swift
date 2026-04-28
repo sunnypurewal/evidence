@@ -15,6 +15,7 @@ public enum Help {
       capture-evidence      Capture a one-shot build evidence screenshot.
       diff                  Compare current captures against committed baselines.
       accept-baseline       Promote the latest run into the baseline directory.
+      upload-screenshots    Upload screenshots to App Store Connect.
 
     Configuration:
       Commands read .evidence.toml from the current directory. Required fields:
@@ -24,6 +25,7 @@ public enum Help {
       evidence capture-evidence --ticket APP-123
       evidence resize --input raw.png --target 6.9 --output app-store.png
       evidence diff --baseline docs/baselines --markdown docs/build-evidence/diff.md
+      evidence upload-screenshots --dry-run
     """
 
     public static let captureScreenshots = """
@@ -170,6 +172,35 @@ public enum Help {
       evidence accept-baseline
     """
 
+    public static let uploadScreenshots = """
+    evidence upload-screenshots [--dry-run] [--locale en-US]
+
+    Uploads PNG screenshots from evidence_dir to App Store Connect screenshot
+    slots for the configured app. The command accepts either the default
+    layout:
+
+      <evidence_dir>/<device-target>/<index>.png
+
+    or a per-locale layout:
+
+      <evidence_dir>/<locale>/<device-target>/<index>.png
+
+    Required .evidence.toml table:
+
+      [app_store_connect]
+      key_id = "ABC123DEFG"
+      issuer_id = "00000000-0000-0000-0000-000000000000"
+      p8_path = ".secrets/AuthKey_ABC123DEFG.p8"
+      app_id = "1234567890"
+
+    `--dry-run` validates dimensions and prints every slot that would be
+    created, replaced, or skipped without mutating App Store Connect.
+
+    Example:
+      evidence upload-screenshots --dry-run
+      evidence upload-screenshots --locale en-US
+    """
+
     public static func text(for command: String) throws -> String {
         switch command {
         case "capture-screenshots":
@@ -186,6 +217,8 @@ public enum Help {
             diff
         case "accept-baseline":
             acceptBaseline
+        case "upload-screenshots":
+            uploadScreenshots
         default:
             throw CLIError.usage("Unknown command '\(command)'. Run `evidence --help`.")
         }

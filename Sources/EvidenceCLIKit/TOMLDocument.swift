@@ -14,11 +14,21 @@ public struct TOMLDocument: Equatable {
 
     public static func parse(_ text: String) throws -> TOMLDocument {
         var values: [String: TOMLValue] = [:]
+        var currentTable: String?
 
         for (offset, rawLine) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let lineNumber = offset + 1
             let line = stripComment(String(rawLine)).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !line.isEmpty else {
+                continue
+            }
+
+            if line.hasPrefix("["), line.hasSuffix("]") {
+                let tableName = String(line.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !tableName.isEmpty else {
+                    throw CLIError.config("Invalid .evidence.toml line \(lineNumber): table name must not be empty.")
+                }
+                currentTable = tableName
                 continue
             }
 
@@ -29,7 +39,8 @@ public struct TOMLDocument: Equatable {
                 throw CLIError.config("Invalid .evidence.toml line \(lineNumber): expected key = value.")
             }
 
-            values[parts[0]] = try parseValue(parts[1], field: parts[0], line: lineNumber)
+            let key = currentTable.map { "\($0).\(parts[0])" } ?? parts[0]
+            values[key] = try parseValue(parts[1], field: key, line: lineNumber)
         }
 
         return TOMLDocument(values: values)
@@ -167,8 +178,7 @@ public struct TOMLDocument: Equatable {
 
             // Split on commas only when we're outside a quoted string. This
             // preserves entries like `"0,0,300x60"` that contain commas
-            // inside the quotes — which RIDDIM-22's `diff_ignore_regions`
-            // relies on.
+            // inside the quotes, which `diff_ignore_regions` relies on.
             var values: [String] = []
             var current = ""
             var inQuotes = false

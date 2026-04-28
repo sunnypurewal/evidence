@@ -7,6 +7,7 @@ public struct EvidenceCLI {
     public var stderr: (String) -> Void
     public var currentDirectory: URL
     public var toolPaths: ToolPaths
+    public var httpClient: HTTPClient
     /// Directory used for the xcresult cache when
     /// `xcresult_keep_full_bundle = false`. Defaults to `~/.evidence/cache`.
     public var cacheDirectory: URL
@@ -18,6 +19,7 @@ public struct EvidenceCLI {
         stderr: @escaping (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) },
         currentDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true),
         toolPaths: ToolPaths = ToolPaths(),
+        httpClient: HTTPClient = URLSessionHTTPClient(),
         cacheDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".evidence", isDirectory: true)
             .appendingPathComponent("cache", isDirectory: true)
@@ -28,6 +30,7 @@ public struct EvidenceCLI {
         self.stderr = stderr
         self.currentDirectory = currentDirectory
         self.toolPaths = toolPaths
+        self.httpClient = httpClient
         self.cacheDirectory = cacheDirectory
     }
 
@@ -88,6 +91,8 @@ public struct EvidenceCLI {
             try diff(commandArguments, config: config)
         case "accept-baseline":
             try acceptBaseline(commandArguments, config: config)
+        case "upload-screenshots":
+            try uploadScreenshots(commandArguments, config: config)
         default:
             throw CLIError.usage("Unknown command '\(first)'. Run `evidence --help`.")
         }
@@ -271,7 +276,7 @@ public struct EvidenceCLI {
         let bundleExists = fileManager.fileExists(atPath: workingBundleURL.path)
         if !bundleExists {
             // Build error fast-fail: still write a markdown summary so the PR
-            // / Jira comment surfaces what went wrong, then propagate the
+            // / PR comment surfaces what went wrong, then propagate the
             // failure as a non-zero exit.
             let markdown = XcresultMarkdown.renderBuildError(ticket: ticket, stderr: testResult.stderr)
             try markdown.write(to: summaryURL, atomically: true, encoding: .utf8)
@@ -444,7 +449,7 @@ public struct EvidenceCLI {
         // Mirror the latest run's PNGs into the baseline directory. We
         // deliberately walk the source tree (rather than `cp -R`) so we can
         // skip non-PNG artifacts like `diff/`, `diff-report.json`, and the
-        // xcresult bundle/markdown pair RIDDIM-33 added.
+        // xcresult bundle/markdown pair.
         let enumerator = fileManager.enumerator(at: sourceURL, includingPropertiesForKeys: [.isRegularFileKey])
         var copied = 0
         // Resolve symlinks once so a `/var -> /private/var` redirection on
@@ -480,6 +485,14 @@ public struct EvidenceCLI {
         }
 
         stdout("Accepted \(copied) baseline image(s) at \(baselineURL.path).")
+    }
+
+    private func uploadScreenshots(_ arguments: [String], config: EvidenceConfig) throws {
+        try AppStoreScreenshotUploader(
+            fileManager: fileManager,
+            httpClient: httpClient,
+            stdout: stdout
+        ).upload(arguments: arguments, config: config, currentDirectory: currentDirectory)
     }
 
     private func markdownURL(for output: URL, config: EvidenceConfig) -> String? {

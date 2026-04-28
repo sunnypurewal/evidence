@@ -12,6 +12,7 @@ It is an open-source Swift package and companion CLI for screenshots, App Store 
 - Describes screenshot flows as `ScreenshotPlan` scenes, anchors, launch hooks, and navigation actions.
 - Writes captures to predictable output directories for review, release checks, and App Store source material.
 - Provides CLI workflows for screenshot capture, build evidence, resizing, marketing renders, and preview video encoding.
+- Uploads App Store screenshots from the same captured directory with dry-run planning and dimension checks.
 - Keeps app-specific plans, copy, brand data, and generated artifacts in the consuming app repository.
 
 ## Requirements
@@ -109,7 +110,7 @@ xcode_project = "ios/MyApp.xcodeproj"
 
 ### xcresult bundles
 
-`evidence capture-evidence` can also produce the matching `.xcresult` bundle from `xcodebuild test`, plus a markdown summary suitable for inlining in a PR or Jira comment. Enable it in `.evidence.toml`:
+`evidence capture-evidence` can also produce the matching `.xcresult` bundle from `xcodebuild test`, plus a markdown summary suitable for inlining in a pull request comment. Enable it in `.evidence.toml`:
 
 ```toml
 xcresult_enabled = true
@@ -126,7 +127,7 @@ When `xcresult_keep_full_bundle = false` (or the CLI flag `--xcresult-summary-on
 
 If `xcodebuild test` fails before the bundle is produced (for example, a build error), `<KEY>-tests.md` still gets written with a `Build error` excerpt so the PR comment surfaces what went wrong. The CLI exits non-zero in that case so CI catches the failure.
 
-> The `[xcresult]` table from RIDDIM-33 is exposed as flat keys (`xcresult_enabled`, `xcresult_keep_full_bundle`) because the project's TOML parser is intentionally line-based (no nested tables yet). Behaviour is otherwise identical.
+> The conceptual `[xcresult]` table is exposed as flat keys (`xcresult_enabled`, `xcresult_keep_full_bundle`) because the project's TOML parser is intentionally lightweight. Behaviour is otherwise identical.
 
 ### Visual regression
 
@@ -195,6 +196,7 @@ evidence record-preview --input capture.mov --output preview.mp4 --trim-start 0 
 evidence render-marketing --scene scene.json --svg scene.svg --output scene.png
 evidence diff --baseline docs/baselines --markdown docs/build-evidence/diff.md
 evidence accept-baseline
+evidence upload-screenshots --dry-run
 ```
 
 The CLI wraps Xcode simulator tooling, ImageMagick, and ffmpeg with explicit checks so missing local dependencies fail with actionable messages.
@@ -202,6 +204,61 @@ The CLI wraps Xcode simulator tooling, ImageMagick, and ffmpeg with explicit che
 Use raw capture when the screenshot should show the app exactly as it runs. Use `render-marketing` when the App Store asset needs a composed layout with headlines, badges, metrics, timelines, device framing, or source text around app imagery.
 
 Marketing scenes are JSON files with app-owned copy and brand values. See `Examples/Marketing/scene.json` for a complete example using the supported row kinds: `left`, `right`, `badge`, `metric`, `timeline`, `stage`, `row`, and `compose`.
+
+### Upload to App Store Connect
+
+`evidence upload-screenshots` closes the loop from captured screenshots to App Store Connect screenshot slots. It scans PNGs under `evidence_dir`, validates their dimensions against the device target directory, plans create/replace/skip actions, and uploads changed screenshots through App Store Connect's resumable upload operations.
+
+Add App Store Connect API credentials to `.evidence.toml`:
+
+```toml
+[app_store_connect]
+key_id = "ABC123DEFG"
+issuer_id = "00000000-0000-0000-0000-000000000000"
+p8_path = ".secrets/AuthKey_ABC123DEFG.p8"
+app_id = "1234567890"
+```
+
+The private `.p8` file should stay outside git. In CI, write it from a secret before running the command.
+
+Supported screenshot layouts:
+
+```text
+docs/build-evidence/6.9/01-home.png
+docs/build-evidence/ipad-13/01-home.png
+docs/build-evidence/en-US/6.9/01-home.png
+docs/build-evidence/fr-FR/6.9/01-home.png
+```
+
+Use dry-run first:
+
+```sh
+evidence upload-screenshots --dry-run
+evidence upload-screenshots --dry-run --locale en-US
+```
+
+The plan lists every slot, whether the content hash already matches (`✓`) or would change (`✗`), and the action (`create`, `replace`, or `skip`). A real upload deletes replaced screenshots, creates new screenshot resources, uploads the PNG bytes through the returned upload operations, and marks each screenshot uploaded.
+
+GitHub Actions example:
+
+```yaml
+jobs:
+  upload-screenshots:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write App Store Connect key
+        shell: bash
+        env:
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          mkdir -p .secrets
+          printf '%s' "$ASC_PRIVATE_KEY" > .secrets/AuthKey_ABC123DEFG.p8
+      - uses: sunnypurewal/evidence@v0
+        with:
+          subcommand: upload-screenshots
+          extra-args: '--dry-run'
+```
 
 ## Use in CI
 
@@ -224,7 +281,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-The Action accepts a `subcommand` input matching the CLI verb (`capture-screenshots`, `capture-evidence`, `resize`, `render-marketing`, `record-preview`, `diff`) along with passthrough inputs for `config`, `ticket`, `baseline-dir`, `output-dir`, and `extra-args`. Set `comment-on-pr: 'true'` and pass `github-token` to have the Action post a PR comment listing every artifact produced by the run; the comment step is automatically skipped when no token is supplied or when the workflow does not run on a `pull_request` event.
+The Action accepts a `subcommand` input matching the CLI verb (`capture-screenshots`, `capture-evidence`, `resize`, `render-marketing`, `record-preview`, `diff`, `upload-screenshots`) along with passthrough inputs for `config`, `ticket`, `baseline-dir`, `output-dir`, and `extra-args`. Set `comment-on-pr: 'true'` and pass `github-token` to have the Action post a PR comment listing every artifact produced by the run; the comment step is automatically skipped when no token is supplied or when the workflow does not run on a `pull_request` event.
 
 ImageMagick and ffmpeg are installed and cached the first time the Action runs on a given runner, so warm runs reuse the formula tarballs. The `evidence` CLI itself is built once per release ref and cached under `~/runner.temp/evidence-build/.build`.
 
