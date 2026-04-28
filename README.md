@@ -1,5 +1,6 @@
 # evidence
 
+[![swift-test](https://github.com/sunnypurewal/evidence/actions/workflows/swift-test.yml/badge.svg?branch=main)](https://github.com/sunnypurewal/evidence/actions/workflows/swift-test.yml)
 [![Use on GitHub Marketplace](https://img.shields.io/badge/Marketplace-evidence-purple?logo=githubactions)](https://github.com/marketplace/actions/evidence)
 
 `evidence` captures repeatable proof that app flows work, using real iOS app runs instead of manual replay.
