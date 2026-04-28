@@ -277,6 +277,276 @@ final class EvidenceCLIKitTests: XCTestCase {
         }
     }
 
+    // MARK: - xcresult bundle capture (RIDDIM-33)
+
+    private static let cleanRunSummaryJSON = """
+    {
+      "title": "Example.xcresult",
+      "startTime": 1714000000.0,
+      "finishTime": 1714000045.5,
+      "environmentDescription": "Example - iOS 17",
+      "topInsights": [],
+      "result": "Passed",
+      "totalTestCount": 12,
+      "passedTests": 12,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "expectedFailures": 0,
+      "statistics": [],
+      "devicesAndConfigurations": [],
+      "testFailures": []
+    }
+    """
+
+    private static let singleFailureSummaryJSON = """
+    {
+      "title": "Example.xcresult",
+      "startTime": 1714000000.0,
+      "finishTime": 1714000020.0,
+      "environmentDescription": "Example - iOS 17",
+      "topInsights": [],
+      "result": "Failed",
+      "totalTestCount": 4,
+      "passedTests": 3,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "expectedFailures": 0,
+      "statistics": [],
+      "devicesAndConfigurations": [],
+      "testFailures": [
+        {
+          "testName": "testCheckoutCompletesPayment",
+          "targetName": "ExampleAppTests",
+          "failureText": "/Users/ci/work/ExampleApp/Tests/CheckoutTests.swift:42: XCTAssertEqual failed: (\\"declined\\") is not equal to (\\"paid\\")",
+          "testIdentifier": 1,
+          "testIdentifierString": "ExampleAppTests/testCheckoutCompletesPayment"
+        }
+      ]
+    }
+    """
+
+    func testXcresultSummaryParsesCleanRun() throws {
+        let summary = try XcresultSummary.parse(Self.cleanRunSummaryJSON)
+
+        XCTAssertEqual(summary.totalTestCount, 12)
+        XCTAssertEqual(summary.passedTests, 12)
+        XCTAssertEqual(summary.failedTests, 0)
+        XCTAssertEqual(summary.failures.count, 0)
+        XCTAssertEqual(summary.durationSeconds, 45.5)
+        XCTAssertEqual(summary.result, "Passed")
+    }
+
+    func testXcresultSummaryParsesSingleFailureWithFileLine() throws {
+        let summary = try XcresultSummary.parse(Self.singleFailureSummaryJSON)
+
+        XCTAssertEqual(summary.failedTests, 1)
+        XCTAssertEqual(summary.failures.count, 1)
+        let failure = try XCTUnwrap(summary.failures.first)
+        XCTAssertEqual(failure.testName, "testCheckoutCompletesPayment")
+        XCTAssertEqual(failure.targetName, "ExampleAppTests")
+        XCTAssertEqual(failure.fileLine, "/Users/ci/work/ExampleApp/Tests/CheckoutTests.swift:42")
+    }
+
+    func testXcresultMarkdownRendersHeadlineCountsAndFailureFileLine() throws {
+        let summary = try XcresultSummary.parse(Self.singleFailureSummaryJSON)
+        let markdown = XcresultMarkdown.render(summary, ticket: "APP-901")
+
+        XCTAssertTrue(markdown.contains("# APP-901 — test summary"), "missing header: \(markdown)")
+        XCTAssertTrue(markdown.contains("- Result: **Failed**"), "missing result line: \(markdown)")
+        XCTAssertTrue(markdown.contains("- Total: 4"))
+        XCTAssertTrue(markdown.contains("- Passed: 3"))
+        XCTAssertTrue(markdown.contains("- Failed: 1"))
+        XCTAssertTrue(markdown.contains("Duration: 20.00s"))
+        XCTAssertTrue(markdown.contains("**testCheckoutCompletesPayment** (ExampleAppTests)"))
+        XCTAssertTrue(markdown.contains("`/Users/ci/work/ExampleApp/Tests/CheckoutTests.swift:42`"))
+    }
+
+    func testCaptureEvidenceWithXcresultEnabledRunsXcodebuildAndWritesSummary() throws {
+        let directory = try configuredProject(extraLines: [
+            "xcresult_enabled = true"
+        ])
+        let runner = RecordingRunner(
+            createScreenshotForSimctl: true,
+            fabricateXcresultBundle: true,
+            xcresulttoolSummaryStdout: Self.cleanRunSummaryJSON
+        )
+        var output: [String] = []
+        let cli = testCLI(directory: directory, runner: runner, stdout: { output.append($0) })
+
+        try cli.execute(["capture-evidence", "--ticket", "APP-200"])
+
+        let evidenceDir = directory.appendingPathComponent("docs/build-evidence")
+        let summary = evidenceDir.appendingPathComponent("APP-200-tests.md")
+        let bundle = evidenceDir.appendingPathComponent("APP-200.xcresult")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: summary.path), "summary not written")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: bundle.path), "bundle not retained when keep_full_bundle defaults true")
+
+        let xcodebuildCommand = runner.commands.first(where: { $0.arguments.first == "xcodebuild" })
+        XCTAssertNotNil(xcodebuildCommand)
+        XCTAssertTrue(xcodebuildCommand?.arguments.contains("-resultBundlePath") == true)
+        XCTAssertTrue(xcodebuildCommand?.arguments.contains(bundle.path) == true)
+
+        let summarytoolCommand = runner.commands.first(where: { $0.arguments.starts(with: ["xcresulttool", "get", "test-results", "summary"]) })
+        XCTAssertNotNil(summarytoolCommand)
+        XCTAssertTrue(summarytoolCommand?.arguments.contains("--path") == true)
+        XCTAssertTrue(summarytoolCommand?.arguments.contains(bundle.path) == true)
+
+        let written = try String(contentsOf: summary, encoding: .utf8)
+        XCTAssertTrue(written.contains("# APP-200 — test summary"))
+        XCTAssertTrue(written.contains("Total: 12"))
+    }
+
+    func testCaptureEvidenceWithKeepFullBundleFalseMovesBundleToCache() throws {
+        let directory = try configuredProject(extraLines: [
+            "xcresult_enabled = true",
+            "xcresult_keep_full_bundle = false"
+        ])
+        let cacheDirectory = directory.appendingPathComponent("xcresult-cache", isDirectory: true)
+        let runner = RecordingRunner(
+            createScreenshotForSimctl: true,
+            fabricateXcresultBundle: true,
+            xcresulttoolSummaryStdout: Self.cleanRunSummaryJSON
+        )
+        let cli = testCLI(directory: directory, runner: runner, cacheDirectory: cacheDirectory)
+
+        try cli.execute(["capture-evidence", "--ticket", "APP-300"])
+
+        let evidenceDir = directory.appendingPathComponent("docs/build-evidence")
+        let summary = evidenceDir.appendingPathComponent("APP-300-tests.md")
+        let bundleInEvidence = evidenceDir.appendingPathComponent("APP-300.xcresult")
+        let bundleInCache = cacheDirectory.appendingPathComponent("APP-300.xcresult")
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: summary.path), "summary should remain in evidence dir")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: bundleInEvidence.path), "bundle should be moved out of evidence dir")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: bundleInCache.path), "bundle should land in cache dir")
+    }
+
+    func testCaptureEvidenceXcresultSummaryOnlyFlagOverridesKeepFullBundle() throws {
+        let directory = try configuredProject(extraLines: [
+            "xcresult_enabled = true",
+            "xcresult_keep_full_bundle = true"
+        ])
+        let cacheDirectory = directory.appendingPathComponent("xcresult-cache", isDirectory: true)
+        let runner = RecordingRunner(
+            createScreenshotForSimctl: true,
+            fabricateXcresultBundle: true,
+            xcresulttoolSummaryStdout: Self.cleanRunSummaryJSON
+        )
+        let cli = testCLI(directory: directory, runner: runner, cacheDirectory: cacheDirectory)
+
+        try cli.execute(["capture-evidence", "--ticket", "APP-301", "--xcresult-summary-only"])
+
+        let bundleInEvidence = directory.appendingPathComponent("docs/build-evidence/APP-301.xcresult")
+        let bundleInCache = cacheDirectory.appendingPathComponent("APP-301.xcresult")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: bundleInEvidence.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: bundleInCache.path))
+    }
+
+    func testCaptureEvidenceXcresultTestFailureWritesSummaryAndThrows() throws {
+        let directory = try configuredProject(extraLines: [
+            "xcresult_enabled = true"
+        ])
+        // xcodebuild test exits non-zero on test failure, but the bundle IS
+        // produced — the markdown must still be written and the CLI must
+        // surface the non-zero exit so CI catches the regression.
+        let runner = RecordingRunner(
+            createScreenshotForSimctl: true,
+            fabricateXcresultBundle: true,
+            xcresulttoolSummaryStdout: Self.singleFailureSummaryJSON,
+            xcodebuildExitCode: 65
+        )
+        let cli = testCLI(directory: directory, runner: runner)
+
+        XCTAssertThrowsError(try cli.execute(["capture-evidence", "--ticket", "APP-410"])) { error in
+            guard case .commandFailed(let message) = (error as? CLIError) else {
+                return XCTFail("expected commandFailed, got \(error)")
+            }
+            XCTAssertTrue(message.contains("1 failure"))
+        }
+
+        let summary = directory.appendingPathComponent("docs/build-evidence/APP-410-tests.md")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: summary.path), "summary should be written even on failure")
+        let written = try String(contentsOf: summary, encoding: .utf8)
+        XCTAssertTrue(written.contains("- Result: **Failed**"))
+        XCTAssertTrue(written.contains("**testCheckoutCompletesPayment**"))
+    }
+
+    func testCaptureEvidenceXcresultBuildErrorWritesFastFailMarkdownAndThrows() throws {
+        let directory = try configuredProject(extraLines: [
+            "xcresult_enabled = true"
+        ])
+        let runner = RecordingRunner(
+            createScreenshotForSimctl: true,
+            fabricateXcresultBundle: false, // simulate build failure: no bundle produced
+            xcodebuildExitCode: 65,
+            xcodebuildStderr: "error: no such module 'Missing'"
+        )
+        let cli = testCLI(directory: directory, runner: runner)
+
+        XCTAssertThrowsError(try cli.execute(["capture-evidence", "--ticket", "APP-400"])) { error in
+            guard case .commandFailed(let message) = (error as? CLIError) else {
+                return XCTFail("expected commandFailed, got \(error)")
+            }
+            XCTAssertTrue(message.contains("xcodebuild test failed"))
+        }
+
+        let summary = directory.appendingPathComponent("docs/build-evidence/APP-400-tests.md")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: summary.path))
+        let written = try String(contentsOf: summary, encoding: .utf8)
+        XCTAssertTrue(written.contains("- Result: **Build error**"))
+        XCTAssertTrue(written.contains("no such module 'Missing'"))
+    }
+
+    func testCaptureEvidenceXcresultDisabledByDefaultDoesNotInvokeXcodebuild() throws {
+        let directory = try configuredProject()
+        let runner = RecordingRunner(createScreenshotForSimctl: true)
+        let cli = testCLI(directory: directory, runner: runner)
+
+        try cli.execute(["capture-evidence", "--ticket", "APP-500"])
+
+        XCTAssertNil(runner.commands.first(where: { $0.arguments.first == "xcodebuild" }))
+        XCTAssertNil(runner.commands.first(where: { $0.arguments.starts(with: ["xcresulttool"]) }))
+    }
+
+    func testConfigParsesXcresultFlagsAndDefaults() throws {
+        let baseDocument = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        """)
+
+        let baseConfig = try EvidenceConfig.parse(baseDocument)
+        XCTAssertEqual(baseConfig.xcresult, XcresultConfig(enabled: false, keepFullBundle: true))
+
+        let configuredDocument = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        xcresult_enabled = true
+        xcresult_keep_full_bundle = false
+        """)
+
+        let configured = try EvidenceConfig.parse(configuredDocument)
+        XCTAssertTrue(configured.xcresult.enabled)
+        XCTAssertFalse(configured.xcresult.keepFullBundle)
+    }
+
+    func testConfigRejectsNonBooleanXcresultEnabled() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        xcresult_enabled = "yes"
+        """)
+
+        XCTAssertThrowsError(try EvidenceConfig.parse(document)) { error in
+            XCTAssertEqual(
+                error as? CLIError,
+                .config("Invalid field 'xcresult_enabled': expected boolean.")
+            )
+        }
+    }
+
     func testCaptureEvidenceInfersRawGitHubURLFromOriginRemote() throws {
         let directory = try configuredProject()
         let runner = RecordingRunner(
@@ -317,13 +587,15 @@ final class EvidenceCLIKitTests: XCTestCase {
     private func testCLI(
         directory: URL,
         runner: RecordingRunner,
-        stdout: @escaping (String) -> Void = { _ in }
+        stdout: @escaping (String) -> Void = { _ in },
+        cacheDirectory: URL? = nil
     ) -> EvidenceCLI {
         EvidenceCLI(
             runner: runner,
             stdout: stdout,
             currentDirectory: directory,
-            toolPaths: ToolPaths(xcrun: "/bin/echo", magick: "/bin/echo", ffmpeg: "/bin/echo", git: "/bin/echo")
+            toolPaths: ToolPaths(xcrun: "/bin/echo", magick: "/bin/echo", ffmpeg: "/bin/echo", git: "/bin/echo"),
+            cacheDirectory: cacheDirectory ?? directory.appendingPathComponent("evidence-cache", isDirectory: true)
         )
     }
 
@@ -333,7 +605,7 @@ final class EvidenceCLIKitTests: XCTestCase {
     }
 }
 
-private final class RecordingRunner: CommandRunning {
+fileprivate final class RecordingRunner: CommandRunning {
     struct Command: Equatable {
         var executable: String
         var arguments: [String]
@@ -342,10 +614,33 @@ private final class RecordingRunner: CommandRunning {
     var commands: [Command] = []
     var createScreenshotForSimctl: Bool
     var gitRemote: String?
+    /// When true, an `xcodebuild test ... -resultBundlePath <path>` invocation
+    /// fabricates an empty directory at that path so downstream code that
+    /// checks for the bundle's existence behaves like it would in production.
+    var fabricateXcresultBundle: Bool
+    /// Stub stdout returned for any `xcresulttool get test-results summary`
+    /// invocation. Tests can pre-load JSON shaped like the real tool's output.
+    var xcresulttoolSummaryStdout: String?
+    /// Override exit code for any `xcodebuild test` invocation. Useful for
+    /// emulating build errors and test failures.
+    var xcodebuildExitCode: Int32
+    /// Stub stderr returned by xcodebuild when `xcodebuildExitCode != 0`.
+    var xcodebuildStderr: String
 
-    init(createScreenshotForSimctl: Bool = false, gitRemote: String? = nil) {
+    init(
+        createScreenshotForSimctl: Bool = false,
+        gitRemote: String? = nil,
+        fabricateXcresultBundle: Bool = false,
+        xcresulttoolSummaryStdout: String? = nil,
+        xcodebuildExitCode: Int32 = 0,
+        xcodebuildStderr: String = ""
+    ) {
         self.createScreenshotForSimctl = createScreenshotForSimctl
         self.gitRemote = gitRemote
+        self.fabricateXcresultBundle = fabricateXcresultBundle
+        self.xcresulttoolSummaryStdout = xcresulttoolSummaryStdout
+        self.xcodebuildExitCode = xcodebuildExitCode
+        self.xcodebuildStderr = xcodebuildStderr
     }
 
     func run(_ executable: String, _ arguments: [String]) throws -> CommandResult {
@@ -358,6 +653,26 @@ private final class RecordingRunner: CommandRunning {
 
         if arguments == ["remote", "get-url", "origin"], let gitRemote {
             return CommandResult(exitCode: 0, stdout: gitRemote)
+        }
+
+        // xcodebuild test handling: forge a result bundle directory if asked,
+        // and report the configured exit code / stderr.
+        if arguments.first == "xcodebuild", arguments.dropFirst().first == "test" {
+            if fabricateXcresultBundle,
+               let bundleIndex = arguments.firstIndex(of: "-resultBundlePath"),
+               arguments.index(after: bundleIndex) < arguments.endIndex {
+                let bundlePath = arguments[arguments.index(after: bundleIndex)]
+                try FileManager.default.createDirectory(
+                    at: URL(fileURLWithPath: bundlePath),
+                    withIntermediateDirectories: true
+                )
+            }
+            return CommandResult(exitCode: xcodebuildExitCode, stderr: xcodebuildStderr)
+        }
+
+        if arguments.starts(with: ["xcresulttool", "get", "test-results", "summary"]),
+           let stdout = xcresulttoolSummaryStdout {
+            return CommandResult(exitCode: 0, stdout: stdout)
         }
 
         return CommandResult(exitCode: 0)

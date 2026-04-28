@@ -12,6 +12,7 @@ public struct EvidenceConfig: Equatable {
     public var xcodeWorkspace: String?
     public var xcodeProject: String?
     public var previewDefaults: PreviewDefaults
+    public var xcresult: XcresultConfig
 
     public init(
         scheme: String,
@@ -24,7 +25,8 @@ public struct EvidenceConfig: Equatable {
         repositoryRawBaseURL: String? = nil,
         xcodeWorkspace: String? = nil,
         xcodeProject: String? = nil,
-        previewDefaults: PreviewDefaults = PreviewDefaults()
+        previewDefaults: PreviewDefaults = PreviewDefaults(),
+        xcresult: XcresultConfig = XcresultConfig()
     ) {
         self.scheme = scheme
         self.bundleID = bundleID
@@ -37,6 +39,7 @@ public struct EvidenceConfig: Equatable {
         self.xcodeWorkspace = xcodeWorkspace
         self.xcodeProject = xcodeProject
         self.previewDefaults = previewDefaults
+        self.xcresult = xcresult
     }
 
     public static func load(from url: URL) throws -> EvidenceConfig {
@@ -84,8 +87,31 @@ public struct EvidenceConfig: Equatable {
                 maxDuration: try document.optionalDouble("preview_max_duration_seconds", default: 30, minimum: 0.1) ?? 30,
                 trimStart: try document.optionalDouble("preview_trim_start", default: 0, minimum: 0) ?? 0,
                 trimEnd: try document.optionalDouble("preview_trim_end", minimum: 0)
+            ),
+            xcresult: XcresultConfig(
+                enabled: try document.optionalBool("xcresult_enabled", default: false) ?? false,
+                keepFullBundle: try document.optionalBool("xcresult_keep_full_bundle", default: true) ?? true
             )
         )
+    }
+}
+
+/// Controls whether `capture-evidence` also produces an `.xcresult` bundle and
+/// markdown summary alongside the screenshot.
+///
+/// The `.evidence.toml` keys are flat (`xcresult_enabled`,
+/// `xcresult_keep_full_bundle`) rather than a `[xcresult]` table because the
+/// project's TOML parser is intentionally line-based (no nested tables). The
+/// behaviour matches the table-form description in RIDDIM-33: setting
+/// `xcresult_enabled = true` is equivalent to `[xcresult] enabled = true` and
+/// `xcresult_keep_full_bundle` mirrors `keep_full_bundle`.
+public struct XcresultConfig: Equatable {
+    public var enabled: Bool
+    public var keepFullBundle: Bool
+
+    public init(enabled: Bool = false, keepFullBundle: Bool = true) {
+        self.enabled = enabled
+        self.keepFullBundle = keepFullBundle
     }
 }
 

@@ -106,6 +106,27 @@ xcode_workspace = "ios/MyApp.xcworkspace"
 xcode_project = "ios/MyApp.xcodeproj"
 ```
 
+### xcresult bundles
+
+`evidence capture-evidence` can also produce the matching `.xcresult` bundle from `xcodebuild test`, plus a markdown summary suitable for inlining in a PR or Jira comment. Enable it in `.evidence.toml`:
+
+```toml
+xcresult_enabled = true
+xcresult_keep_full_bundle = true   # default; set false to ship only the summary
+```
+
+A run with `--ticket APP-123` then writes:
+
+- `<evidence_dir>/APP-123-running.png` (the screenshot, as before)
+- `<evidence_dir>/APP-123.xcresult`     (full bundle, openable in Xcode and `xcrun xcresulttool`)
+- `<evidence_dir>/APP-123-tests.md`     (totals, first three failures with `file:line`, total duration)
+
+When `xcresult_keep_full_bundle = false` (or the CLI flag `--xcresult-summary-only` is passed), the markdown summary stays in the evidence directory and the full bundle is moved to `~/.evidence/cache/APP-123.xcresult` so the bundle remains inspectable locally without bloating the repo.
+
+If `xcodebuild test` fails before the bundle is produced (for example, a build error), `<KEY>-tests.md` still gets written with a `Build error` excerpt so the PR comment surfaces what went wrong. The CLI exits non-zero in that case so CI catches the failure.
+
+> The `[xcresult]` table from RIDDIM-33 is exposed as flat keys (`xcresult_enabled`, `xcresult_keep_full_bundle`) because the project's TOML parser is intentionally line-based (no nested tables yet). Behaviour is otherwise identical.
+
 Run the command that matches the workflow:
 
 ```sh

@@ -116,6 +116,16 @@ public struct TOMLDocument: Equatable {
         return value
     }
 
+    public func optionalBool(_ key: String, default defaultValue: Bool? = nil) throws -> Bool? {
+        guard let rawValue = values[key] else {
+            return defaultValue
+        }
+        guard case let .bool(value) = rawValue else {
+            throw CLIError.config("Invalid field '\(key)': expected boolean.")
+        }
+        return value
+    }
+
     public func optionalDouble(_ key: String, default defaultValue: Double? = nil, minimum: Double? = nil) throws -> Double? {
         guard let rawValue = values[key] else {
             return defaultValue
@@ -140,6 +150,13 @@ public struct TOMLDocument: Equatable {
     private static func parseValue(_ text: String, field: String, line: Int) throws -> TOMLValue {
         if text.hasPrefix("\""), text.hasSuffix("\"") {
             return .string(String(text.dropFirst().dropLast()))
+        }
+
+        if text == "true" {
+            return .bool(true)
+        }
+        if text == "false" {
+            return .bool(false)
         }
 
         if text.hasPrefix("["), text.hasSuffix("]") {
@@ -189,4 +206,5 @@ public enum TOMLValue: Equatable {
     case stringArray([String])
     case int(Int)
     case double(Double)
+    case bool(Bool)
 }
