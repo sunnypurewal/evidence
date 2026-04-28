@@ -564,6 +564,315 @@ final class EvidenceCLIKitTests: XCTestCase {
         )
     }
 
+    // MARK: - RIDDIM-22: visual regression mode
+
+    func testDiffConfigParsesIgnoreRegionsAndDefaults() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        diff_threshold = 0.005
+        diff_ignore_regions = ["0,0,300x60", "0,2700,1290x96"]
+        diff_baseline_dir = "docs/baselines"
+        diff_accept_allow_dirty = true
+        diff_fuzz_percent = 5
+        """)
+
+        let config = try EvidenceConfig.parse(document)
+        XCTAssertEqual(config.diff.threshold, 0.005)
+        XCTAssertEqual(config.diff.baselineDirectory, "docs/baselines")
+        XCTAssertTrue(config.diff.acceptAllowDirty)
+        XCTAssertEqual(config.diff.fuzzPercent, 5)
+        XCTAssertEqual(config.diff.ignoreRegions, [
+            DiffRegion(x: 0, y: 0, width: 300, height: 60),
+            DiffRegion(x: 0, y: 2700, width: 1290, height: 96)
+        ])
+    }
+
+    func testDiffConfigRejectsMalformedIgnoreRegion() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        diff_ignore_regions = ["0,0,not-a-rect"]
+        """)
+
+        XCTAssertThrowsError(try EvidenceConfig.parse(document)) { error in
+            XCTAssertEqual(
+                error as? CLIError,
+                .config("Invalid field 'diff_ignore_regions': '0,0,not-a-rect' is not in 'X,Y,WxH' form (e.g. '0,0,200x100').")
+            )
+        }
+    }
+
+    func testDiffReportsMatchWhenAllScenesUnderThreshold() throws {
+        let directory = try diffProject(threshold: 0.01)
+        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "iPhone 16/home.png")
+        try writeBaselineImage(in: directory, baselineDir: "docs/baselines", scene: "iPhone 16/home.png")
+
+        let runner = RecordingRunner()
+        runner.fabricateMagickCompareOutput = true
+        runner.magickCompareStubs["home.png"] = (exitCode: 0, differingPixels: 0, totalPixels: 1_000_000)
+        var output: [String] = []
+        let cli = testCLI(directory: directory, runner: runner, stdout: { output.append($0) })
+
+        let exitCode = cli.run(["diff"])
+
+        XCTAssertEqual(exitCode, 0)
+        let reportData = try Data(contentsOf: directory.appendingPathComponent("docs/build-evidence/diff/diff-report.json"))
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: reportData) as? [String: Any])
+        XCTAssertEqual(json["threshold"] as? Double, 0.01)
+        let scenes = try XCTUnwrap(json["scenes"] as? [[String: Any]])
+        XCTAssertEqual(scenes.count, 1)
+        XCTAssertEqual(scenes.first?["status"] as? String, "match")
+        XCTAssertTrue(output.joined(separator: "\n").contains("All 1 scene(s) match"))
+    }
+
+    func testDiffReturnsExitCodeOneWhenSceneExceedsThreshold() throws {
+        let directory = try diffProject(threshold: 0.001)
+        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "home.png")
+        try writeBaselineImage(in: directory, baselineDir: "docs/baselines", scene: "home.png")
+
+        let runner = RecordingRunner()
+        runner.fabricateMagickCompareOutput = true
+        // 5000 / 1_000_000 = 0.5% — well above the 0.1% threshold.
+        runner.magickCompareStubs["home.png"] = (exitCode: 1, differingPixels: 5_000, totalPixels: 1_000_000)
+        var stderr: [String] = []
+        let cli = EvidenceCLI(
+            runner: runner,
+            stdout: { _ in },
+            stderr: { stderr.append($0) },
+            currentDirectory: directory,
+            toolPaths: ToolPaths(xcrun: "/bin/echo", magick: "/bin/echo", ffmpeg: "/bin/echo", git: "/bin/echo")
+        )
+
+        let exitCode = cli.run(["diff"])
+
+        XCTAssertEqual(exitCode, 1, "regression should produce exit code 1")
+        XCTAssertTrue(stderr.joined().contains("exceeded threshold"))
+    }
+
+    func testDiffReturnsExitCodeTwoWhenBaselineMissing() throws {
+        let directory = try diffProject(threshold: 0.01)
+        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "iPhone 16/onboarding.png")
+        // Note: no baseline file written.
+
+        let runner = RecordingRunner()
+        runner.fabricateMagickCompareOutput = true
+        var stderr: [String] = []
+        let cli = EvidenceCLI(
+            runner: runner,
+            stdout: { _ in },
+            stderr: { stderr.append($0) },
+            currentDirectory: directory,
+            toolPaths: ToolPaths(xcrun: "/bin/echo", magick: "/bin/echo", ffmpeg: "/bin/echo", git: "/bin/echo")
+        )
+
+        let exitCode = cli.run(["diff"])
+
+        XCTAssertEqual(exitCode, 2, "missing baseline should produce exit code 2")
+        XCTAssertTrue(stderr.joined().contains("missing baseline"))
+        // The diff command never ran for missing baselines — we should NOT
+        // see a `compare` invocation.
+        XCTAssertFalse(runner.commands.contains { $0.arguments.first == "compare" })
+    }
+
+    func testDiffMasksIgnoreRegionsBeforeCompare() throws {
+        let directory = try diffProject(
+            threshold: 0.01,
+            extraLines: ["diff_ignore_regions = [\"0,0,300x60\"]"]
+        )
+        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "home.png")
+        try writeBaselineImage(in: directory, baselineDir: "docs/baselines", scene: "home.png")
+
+        let runner = RecordingRunner()
+        runner.fabricateMagickCompareOutput = true
+        runner.fabricateMagickMaskOutput = true
+        runner.magickCompareStubs["home.png"] = (exitCode: 0, differingPixels: 0, totalPixels: 1_000_000)
+        let cli = testCLI(directory: directory, runner: runner)
+
+        let exitCode = cli.run(["diff"])
+
+        XCTAssertEqual(exitCode, 0)
+        // Two mask calls (baseline + actual) should precede the compare.
+        let maskCalls = runner.commands.filter { $0.arguments.contains("-fill") && $0.arguments.contains("-draw") }
+        XCTAssertEqual(maskCalls.count, 2, "expected one mask call per side, got \(maskCalls.count)")
+        let drawArguments = maskCalls.flatMap { command -> [String] in
+            command.arguments.enumerated().compactMap { offset, arg in
+                arg == "-draw" ? command.arguments[offset + 1] : nil
+            }
+        }
+        XCTAssertTrue(drawArguments.allSatisfy { $0 == "rectangle 0,0 300,60" }, "unexpected mask rectangles: \(drawArguments)")
+
+        // The compare call should reference the masked variants, not the raw
+        // baseline/actual files — that's the whole point.
+        let compareCall = try XCTUnwrap(runner.commands.first { $0.arguments.first == "compare" })
+        XCTAssertTrue(compareCall.arguments.contains { $0.hasSuffix(".baseline.masked.png") })
+        XCTAssertTrue(compareCall.arguments.contains { $0.hasSuffix(".actual.masked.png") })
+    }
+
+    func testDiffReportsPerDeviceBaselinesIndependently() throws {
+        let directory = try diffProject(threshold: 0.01)
+        // Two scenes per device, both devices share the same scene names.
+        for device in ["iPhone 16", "iPad Pro 13"] {
+            for scene in ["home.png", "settings.png"] {
+                try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "\(device)/\(scene)")
+                try writeBaselineImage(in: directory, baselineDir: "docs/baselines", scene: "\(device)/\(scene)")
+            }
+        }
+
+        let runner = RecordingRunner()
+        runner.fabricateMagickCompareOutput = true
+        // Only iPad/settings regresses; everything else matches.
+        runner.magickCompareStubs["home.png"] = (exitCode: 0, differingPixels: 0, totalPixels: 1_000_000)
+        // settings.png has no per-baseline path discrimination in the stub
+        // map, so we'd flag both. Override iPhone settings to match.
+        runner.magickCompareStubs["settings.png"] = (exitCode: 1, differingPixels: 50_000, totalPixels: 1_000_000)
+        let cli = testCLI(directory: directory, runner: runner)
+
+        let exitCode = cli.run(["diff"])
+
+        // Exit 1 because at least one regression exists.
+        XCTAssertEqual(exitCode, 1)
+        let reportData = try Data(contentsOf: directory.appendingPathComponent("docs/build-evidence/diff/diff-report.json"))
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: reportData) as? [String: Any])
+        let scenes = try XCTUnwrap(json["scenes"] as? [[String: Any]])
+        XCTAssertEqual(scenes.count, 4, "expected 4 scenes (2 devices x 2 scenes), got \(scenes.count)")
+        // Compare calls were issued per device — verify with the recorded
+        // baseline argument.
+        let compareCalls = runner.commands.filter { $0.arguments.first == "compare" }
+        XCTAssertEqual(compareCalls.count, 4)
+        let baselineDevices = Set(compareCalls.compactMap { call -> String? in
+            // Layout ends with [..., baseline, actual, output]. Pull the
+            // device folder name from the baseline path.
+            guard let baseline = call.arguments.dropLast(2).last else { return nil }
+            let url = URL(fileURLWithPath: String(baseline))
+            return url.deletingLastPathComponent().lastPathComponent
+        })
+        XCTAssertEqual(baselineDevices, ["iPhone 16", "iPad Pro 13"])
+    }
+
+    func testDiffWritesPRMarkdownToFileWhenRequested() throws {
+        let directory = try diffProject(threshold: 0.01, rawBaseURL: "https://raw.githubusercontent.com/example/app/main")
+        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "home.png")
+        try writeBaselineImage(in: directory, baselineDir: "docs/baselines", scene: "home.png")
+
+        let runner = RecordingRunner()
+        runner.fabricateMagickCompareOutput = true
+        runner.magickCompareStubs["home.png"] = (exitCode: 0, differingPixels: 0, totalPixels: 1_000_000)
+        let cli = testCLI(directory: directory, runner: runner)
+
+        let exitCode = cli.run(["diff", "--markdown", "docs/build-evidence/diff.md"])
+
+        XCTAssertEqual(exitCode, 0)
+        let markdown = try String(contentsOf: directory.appendingPathComponent("docs/build-evidence/diff.md"), encoding: .utf8)
+        XCTAssertTrue(markdown.contains("Visual regression report"))
+        XCTAssertTrue(markdown.contains("| `home` |"))
+    }
+
+    func testAcceptBaselineRefusesDirtyTreeUnlessForced() throws {
+        let directory = try diffProject(threshold: 0.01)
+        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "home.png")
+
+        let runner = RecordingRunner()
+        runner.gitStatusStdout = " M Sources/EvidenceCLIKit/EvidenceCLI.swift\n"
+        var stderr: [String] = []
+        let cli = EvidenceCLI(
+            runner: runner,
+            stdout: { _ in },
+            stderr: { stderr.append($0) },
+            currentDirectory: directory,
+            toolPaths: ToolPaths(xcrun: "/bin/echo", magick: "/bin/echo", ffmpeg: "/bin/echo", git: "/bin/echo")
+        )
+
+        let dirtyExit = cli.run(["accept-baseline"])
+        XCTAssertEqual(dirtyExit, 1)
+        XCTAssertTrue(stderr.joined().contains("Refusing to accept baseline"))
+
+        // No baseline was written.
+        let baseline = directory.appendingPathComponent("docs/baselines/home.png")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: baseline.path))
+
+        // --force overrides the check.
+        let forcedExit = cli.run(["accept-baseline", "--force"])
+        XCTAssertEqual(forcedExit, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: baseline.path))
+    }
+
+    func testDiffSecondRunIgnoresPriorDiffOutputs() throws {
+        let directory = try diffProject(threshold: 0.01)
+        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "home.png")
+        try writeBaselineImage(in: directory, baselineDir: "docs/baselines", scene: "home.png")
+
+        let runner = RecordingRunner()
+        runner.fabricateMagickCompareOutput = true
+        runner.magickCompareStubs["home.png"] = (exitCode: 0, differingPixels: 0, totalPixels: 1_000_000)
+        let cli = testCLI(directory: directory, runner: runner)
+
+        // First run leaves `docs/build-evidence/diff/home.png` on disk via
+        // the runner's fabricator — exactly what production would do.
+        XCTAssertEqual(cli.run(["diff"]), 0)
+        let diffPath = directory.appendingPathComponent("docs/build-evidence/diff/home.png").path
+        XCTAssertTrue(FileManager.default.fileExists(atPath: diffPath))
+
+        // Second run must NOT pick up the diff output as a new scene to
+        // compare against `<baseline>/diff/home.png` (which doesn't exist).
+        let secondRunner = RecordingRunner()
+        secondRunner.fabricateMagickCompareOutput = true
+        secondRunner.magickCompareStubs["home.png"] = (exitCode: 0, differingPixels: 0, totalPixels: 1_000_000)
+        let cli2 = testCLI(directory: directory, runner: secondRunner)
+        XCTAssertEqual(cli2.run(["diff"]), 0)
+        // Only one compare call (home.png) — not two.
+        let compareCalls = secondRunner.commands.filter { $0.arguments.first == "compare" }
+        XCTAssertEqual(compareCalls.count, 1, "second run should not diff prior diff outputs")
+    }
+
+    func testAcceptBaselineCopiesPNGsAndSkipsDiffOutputs() throws {
+        let directory = try diffProject(threshold: 0.01)
+        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "iPhone 16/home.png")
+        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "iPhone 16/settings.png")
+        // Simulate a previous run leaving diff outputs in place — these must
+        // NOT be copied into the baseline tree.
+        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "diff/iPhone 16/home.png")
+
+        let runner = RecordingRunner()
+        let cli = testCLI(directory: directory, runner: runner)
+
+        let exitCode = cli.run(["accept-baseline"])
+
+        XCTAssertEqual(exitCode, 0)
+        let homePath = directory.appendingPathComponent("docs/baselines/iPhone 16/home.png").path
+        let settingsPath = directory.appendingPathComponent("docs/baselines/iPhone 16/settings.png").path
+        let strayDiffPath = directory.appendingPathComponent("docs/baselines/diff/iPhone 16/home.png").path
+        XCTAssertTrue(FileManager.default.fileExists(atPath: homePath))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: settingsPath))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: strayDiffPath), "diff/ outputs must not flow into the baseline tree")
+    }
+
+    // MARK: helpers
+
+    private func diffProject(
+        threshold: Double,
+        rawBaseURL: String? = nil,
+        extraLines: [String] = []
+    ) throws -> URL {
+        var lines = ["diff_threshold = \(threshold)"]
+        lines.append(contentsOf: extraLines)
+        return try configuredProject(rawBaseURL: rawBaseURL, extraLines: lines)
+    }
+
+    private func writeRunImage(in directory: URL, evidenceDir: String, scene: String) throws {
+        let url = directory.appendingPathComponent(evidenceDir).appendingPathComponent(scene)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("png".utf8).write(to: url)
+    }
+
+    private func writeBaselineImage(in directory: URL, baselineDir: String, scene: String) throws {
+        let url = directory.appendingPathComponent(baselineDir).appendingPathComponent(scene)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("png".utf8).write(to: url)
+    }
+
     private func configuredProject(rawBaseURL: String? = nil, extraLines: [String] = []) throws -> URL {
         let directory = temporaryDirectory()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -626,6 +935,24 @@ fileprivate final class RecordingRunner: CommandRunning {
     var xcodebuildExitCode: Int32
     /// Stub stderr returned by xcodebuild when `xcodebuildExitCode != 0`.
     var xcodebuildStderr: String
+    /// Per-baseline-path stub for `magick compare -metric AE`. The key is the
+    /// last component of the *baseline* image path (the second-to-last
+    /// argument before `output`). The value is `(exitCode, differingPixels)`.
+    /// Default behavior (no stub for a path) is "exit 0, 0 differing pixels"
+    /// so a baseline-by-baseline test only has to declare the regressions.
+    var magickCompareStubs: [String: (exitCode: Int32, differingPixels: Int, totalPixels: Int)] = [:]
+    /// Stdout returned by `git status --porcelain`. Empty by default (clean
+    /// tree), so `evidence accept-baseline` succeeds without configuration.
+    var gitStatusStdout: String = ""
+    /// Whether the runner should physically copy/write into the path passed
+    /// as the third positional argument to `magick compare`. The CLI checks
+    /// for the diff PNG's existence before emitting the markdown URL, so
+    /// tests that exercise the full path need a real file on disk.
+    var fabricateMagickCompareOutput: Bool = false
+    /// Whether the masking step (`magick <src> -fill black -draw ...`) should
+    /// produce its destination file on disk. Mirrors the production tool's
+    /// behaviour; only relevant for ignore-region tests.
+    var fabricateMagickMaskOutput: Bool = false
 
     init(
         createScreenshotForSimctl: Bool = false,
@@ -673,6 +1000,62 @@ fileprivate final class RecordingRunner: CommandRunning {
         if arguments.starts(with: ["xcresulttool", "get", "test-results", "summary"]),
            let stdout = xcresulttoolSummaryStdout {
             return CommandResult(exitCode: 0, stdout: stdout)
+        }
+
+        // `git status --porcelain`, used by `evidence accept-baseline` to
+        // refuse running on a dirty tree. Default is empty (clean).
+        if arguments == ["status", "--porcelain"] {
+            return CommandResult(exitCode: 0, stdout: gitStatusStdout)
+        }
+
+        // `magick compare -metric AE [-fuzz N%] <baseline> <actual> <output>`.
+        // Stub by baseline filename so a test can express "home.png is a
+        // regression with 4200 differing pixels" without touching disk.
+        if arguments.first == "compare", arguments.count >= 3, arguments.last != nil {
+            // Layout: ["compare", "-metric", "AE", (optional "-fuzz", "N%"),
+            //          <baseline>, <actual>, <output>].
+            let baseline = arguments[arguments.count - 3]
+            let output = arguments[arguments.count - 1]
+            let key = (baseline as NSString).lastPathComponent
+            // Strip masked-suffix variant so an ignore-region run still
+            // matches the same stub key as the underlying baseline.
+            let normalizedKey = key
+                .replacingOccurrences(of: ".baseline.masked.png", with: ".png")
+            let stub = magickCompareStubs[normalizedKey]
+                ?? magickCompareStubs[key]
+                ?? (exitCode: 0, differingPixels: 0, totalPixels: 1_000_000)
+
+            if fabricateMagickCompareOutput {
+                try FileManager.default.createDirectory(
+                    at: URL(fileURLWithPath: output).deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try Data("png".utf8).write(to: URL(fileURLWithPath: output))
+            }
+
+            // ImageMagick prints the AE count to stderr; we also embed a
+            // `total=N` token for the parser path that wants a denominator.
+            let combined = "\(stub.differingPixels) total=\(stub.totalPixels)"
+            return CommandResult(
+                exitCode: stub.exitCode,
+                stdout: "",
+                stderr: combined
+            )
+        }
+
+        // `magick <src> -fill black -draw "rectangle ..." <dst>` for ignore
+        // regions. Optionally fabricate the destination so downstream
+        // `compare` calls find a real file.
+        if arguments.count >= 4, arguments.contains("-fill"), arguments.contains("-draw"),
+           let dst = arguments.last {
+            if fabricateMagickMaskOutput {
+                try FileManager.default.createDirectory(
+                    at: URL(fileURLWithPath: dst).deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try Data("png".utf8).write(to: URL(fileURLWithPath: dst))
+            }
+            return CommandResult(exitCode: 0)
         }
 
         return CommandResult(exitCode: 0)
