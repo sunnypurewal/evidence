@@ -101,6 +101,34 @@ final class MarketingRendererTests: XCTestCase {
         XCTAssertEqual(runner.commands.last?.arguments, [svg.path, png.path])
     }
 
+    func testRenderMarketingCommandPreservesAbsoluteOutputPaths() throws {
+        let directory = try configuredProject()
+        let scene = directory.appendingPathComponent("scene.json")
+        try sampleSceneText().write(to: scene, atomically: true, encoding: .utf8)
+
+        let outputDirectory = temporaryDirectory()
+        let svg = outputDirectory.appendingPathComponent("rendered.svg")
+        let png = outputDirectory.appendingPathComponent("rendered.png")
+        let runner = MarketingRecordingRunner()
+        let cli = EvidenceCLI(
+            runner: runner,
+            stdout: { _ in },
+            currentDirectory: directory,
+            toolPaths: ToolPaths(magick: "/bin/echo")
+        )
+
+        try cli.execute([
+            "render-marketing",
+            "--scene", "scene.json",
+            "--svg", svg.path,
+            "--output", png.path,
+            "--target", "6.9"
+        ])
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: svg.path))
+        XCTAssertEqual(runner.commands.last?.arguments, [svg.path, png.path])
+    }
+
     private func configuredProject() throws -> URL {
         let directory = temporaryDirectory()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
