@@ -124,11 +124,10 @@ public struct EvidenceCLI {
             throw CLIError.usage("Unknown marketing target '\(targetName)'. Run `evidence render-marketing --help`.")
         }
 
-        let sceneURL = currentDirectory.appendingPathComponent(scenePath)
-        let outputURL = currentDirectory.appendingPathComponent(outputPath)
-        let svgURL = currentDirectory.appendingPathComponent(
-            optionValue("svg", in: arguments) ?? outputURL.deletingPathExtension().appendingPathExtension("svg").path.replacingOccurrences(of: currentDirectory.path + "/", with: "")
-        )
+        let sceneURL = url(forPath: scenePath)
+        let outputURL = url(forPath: outputPath)
+        let defaultSVGPath = outputURL.deletingPathExtension().appendingPathExtension("svg").path
+        let svgURL = url(forPath: optionValue("svg", in: arguments) ?? defaultSVGPath)
 
         try requireTool(toolPaths.magick, versionArguments: ["--version"], installHint: "Install ImageMagick, for example with `brew install imagemagick`.")
         let renderer = MarketingRenderer(fileManager: fileManager, runner: runner, toolPaths: toolPaths)
@@ -199,6 +198,13 @@ public struct EvidenceCLI {
         }
         let relativePath = output.path.replacingOccurrences(of: currentDirectory.path + "/", with: "")
         return baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/" + relativePath
+    }
+
+    private func url(forPath path: String) -> URL {
+        if path.hasPrefix("/") {
+            return URL(fileURLWithPath: path)
+        }
+        return currentDirectory.appendingPathComponent(path)
     }
 
     private func inferredRepositoryRawBaseURL() -> String? {

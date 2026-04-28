@@ -1,0 +1,7 @@
+scheme = "ExampleApp"
+bundle_id = "com.example.app"
+simulator_udid = "unused-for-marketing-render"
+evidence_dir = "docs/build-evidence"
+screenshot_targets = ["6.9", "6.5", "6.1", "5.5", "ipad-13"]
+preview_targets = ["app-preview"]
+device_matrix = ["iPhone 16 Pro Max"]
