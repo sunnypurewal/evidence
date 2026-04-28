@@ -21,13 +21,20 @@ let package = Package(
         .target(
             name: "Evidence"
         ),
+        .target(
+            name: "EvidenceCLIKit"
+        ),
         .executableTarget(
             name: "EvidenceCLI",
-            dependencies: []
+            dependencies: ["EvidenceCLIKit"]
         ),
         .testTarget(
             name: "EvidenceTests",
             dependencies: ["Evidence"]
+        ),
+        .testTarget(
+            name: "EvidenceCLIKitTests",
+            dependencies: ["EvidenceCLIKit"]
         )
     ]
 )
