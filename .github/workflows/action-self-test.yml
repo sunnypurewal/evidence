@@ -1,0 +1,62 @@
+name: Action self-test
+
+on:
+  pull_request:
+    paths:
+      - 'action.yml'
+      - 'Examples/**'
+      - 'Sources/**'
+      - 'Tests/**'
+      - 'Package.swift'
+      - '.github/workflows/action-self-test.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'action.yml'
+      - 'Examples/**'
+      - 'Sources/**'
+      - 'Tests/**'
+      - 'Package.swift'
+      - '.github/workflows/action-self-test.yml'
+
+jobs:
+  lint-workflows:
+    name: actionlint (example + repo workflows)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install actionlint
+        run: |
+          curl -sSfL -o /tmp/actionlint.tar.gz \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
+          tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
+          sudo mv /tmp/actionlint /usr/local/bin/
+      - name: Lint example workflows and repo workflows
+        # actionlint validates GitHub workflow files, not action manifests. The
+        # action.yml manifest is validated locally by EvidenceCLIKit's
+        # ActionDefinitionTests and server-side when published to Marketplace.
+        run: |
+          actionlint -color Examples/workflows/*.yml .github/workflows/*.yml
+
+  validate-action-manifest:
+    name: Validate action.yml manifest
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ActionDefinitionTests
+        run: swift test --filter ActionDefinitionTests
+
+  smoke-test:
+    name: Smoke-test on macOS
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run evidence --help via the Action
+        uses: ./
+        with:
+          subcommand: help
+          # The fixture project ships a stub config so the Action's config-resolution path is exercised.
+          config: Examples/fixture-project/.evidence.toml
+          comment-on-pr: 'false'
+          evidence-ref: ${{ github.sha }}

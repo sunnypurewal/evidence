@@ -1,0 +1,36 @@
+name: Capture build evidence on PR
+
+# Drop this file into your iOS app repo at .github/workflows/capture-evidence.yml.
+# It runs the evidence CLI on every pull request and posts a comment with the
+# resulting screenshot so reviewers see proof the change runs.
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  capture-evidence:
+    runs-on: macos-14
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Check out app code
+        uses: actions/checkout@v4
+
+      - name: Capture evidence
+        uses: sunnypurewal/evidence@v0
+        with:
+          subcommand: capture-evidence
+          ticket: ${{ github.event.pull_request.title }}
+          comment-on-pr: 'true'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload evidence artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-${{ github.event.pull_request.number }}
+          path: docs/build-evidence
+          if-no-files-found: ignore

@@ -1,0 +1,7 @@
+scheme = "FixtureApp"
+bundle_id = "com.example.fixture"
+simulator_udid = "FIXTURE-UDID"
+evidence_dir = "docs/build-evidence"
+screenshot_targets = ["6.9"]
+preview_targets = ["app-preview"]
+device_matrix = ["iPhone 16 Pro Max"]
