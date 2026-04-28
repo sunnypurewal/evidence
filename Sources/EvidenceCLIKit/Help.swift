@@ -87,11 +87,22 @@ public enum Help {
     """
 
     public static let captureEvidence = """
-    evidence capture-evidence --ticket <KEY>
+    evidence capture-evidence --ticket <KEY> [--xcresult-summary-only]
 
     Captures a one-shot simulator screenshot into the configured evidence_dir.
 
-    Output:
+    When `xcresult_enabled = true` is set in .evidence.toml, also runs
+    `xcodebuild test` with `-resultBundlePath` and writes:
+
+      <evidence_dir>/<KEY>.xcresult       (full structured test result)
+      <evidence_dir>/<KEY>-tests.md       (markdown summary suitable for PR)
+
+    Set `xcresult_keep_full_bundle = false` (or pass `--xcresult-summary-only`)
+    to keep only the markdown summary in the evidence directory; the bundle is
+    moved to `~/.evidence/cache/<KEY>.xcresult` for local inspection without
+    bloating the repo.
+
+    Output (default):
       docs/build-evidence/<KEY>-running.png unless evidence_dir is configured.
 
     Requires .evidence.toml fields:
@@ -99,6 +110,7 @@ public enum Help {
 
     Example:
       evidence capture-evidence --ticket APP-123
+      evidence capture-evidence --ticket APP-123 --xcresult-summary-only
     """
 
     public static func text(for command: String) throws -> String {

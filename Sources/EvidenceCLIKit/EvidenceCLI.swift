@@ -7,6 +7,9 @@ public struct EvidenceCLI {
     public var stderr: (String) -> Void
     public var currentDirectory: URL
     public var toolPaths: ToolPaths
+    /// Directory used for the xcresult cache when
+    /// `xcresult_keep_full_bundle = false`. Defaults to `~/.evidence/cache`.
+    public var cacheDirectory: URL
 
     public init(
         fileManager: FileManager = .default,
@@ -14,7 +17,10 @@ public struct EvidenceCLI {
         stdout: @escaping (String) -> Void = { print($0) },
         stderr: @escaping (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) },
         currentDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true),
-        toolPaths: ToolPaths = ToolPaths()
+        toolPaths: ToolPaths = ToolPaths(),
+        cacheDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".evidence", isDirectory: true)
+            .appendingPathComponent("cache", isDirectory: true)
     ) {
         self.fileManager = fileManager
         self.runner = runner
@@ -22,6 +28,7 @@ public struct EvidenceCLI {
         self.stderr = stderr
         self.currentDirectory = currentDirectory
         self.toolPaths = toolPaths
+        self.cacheDirectory = cacheDirectory
     }
 
     public static func main() {
@@ -83,6 +90,17 @@ public struct EvidenceCLI {
     private func captureScreenshots(config: EvidenceConfig) throws {
         try requireTool(toolPaths.xcrun, versionArguments: ["simctl", "help"], installHint: "Install Xcode and command line tools.")
 
+        let arguments = xcodebuildTestArguments(config: config)
+        let result = try runner.run(toolPaths.xcrun, ["xcodebuild"] + arguments)
+        guard result.exitCode == 0 else {
+            throw CLIError.commandFailed("xcodebuild screenshot capture failed. \(result.stderr)")
+        }
+    }
+
+    /// Build the `xcodebuild test` argument list shared by `capture-screenshots`
+    /// and the xcresult bundle capture path of `capture-evidence`. Caller is
+    /// responsible for prepending the `xcodebuild` token (xcrun forwards it).
+    private func xcodebuildTestArguments(config: EvidenceConfig, resultBundlePath: String? = nil) -> [String] {
         var arguments: [String] = ["test"]
         if let workspace = config.xcodeWorkspace {
             arguments.append(contentsOf: ["-workspace", workspace])
@@ -96,11 +114,10 @@ public struct EvidenceCLI {
         if !config.deviceMatrix.isEmpty {
             arguments.append(contentsOf: ["-only-testing", config.deviceMatrix.joined(separator: ",")])
         }
-
-        let result = try runner.run(toolPaths.xcrun, ["xcodebuild"] + arguments)
-        guard result.exitCode == 0 else {
-            throw CLIError.commandFailed("xcodebuild screenshot capture failed. \(result.stderr)")
+        if let resultBundlePath {
+            arguments.append(contentsOf: ["-resultBundlePath", resultBundlePath])
         }
+        return arguments
     }
 
     private func resize(_ arguments: [String], config: EvidenceConfig) throws {
@@ -194,6 +211,102 @@ public struct EvidenceCLI {
             stdout("![Build evidence](\(url))")
         } else {
             stdout("Captured build evidence at \(output.path)")
+        }
+
+        if config.xcresult.enabled {
+            // CLI flag `--xcresult-summary-only` mirrors the toggle: when set,
+            // the full bundle is dropped to the cache directory and only the
+            // summary markdown is committed under `evidence_dir`.
+            let summaryOnly = arguments.contains("--xcresult-summary-only") || !config.xcresult.keepFullBundle
+            try captureXcresult(
+                ticket: ticket,
+                config: config,
+                evidenceDirectory: outputDirectory,
+                summaryOnly: summaryOnly
+            )
+        }
+    }
+
+    private func captureXcresult(
+        ticket: String,
+        config: EvidenceConfig,
+        evidenceDirectory: URL,
+        summaryOnly: Bool
+    ) throws {
+        let bundleName = "\(ticket).xcresult"
+        let summaryName = "\(ticket)-tests.md"
+        let summaryURL = evidenceDirectory.appendingPathComponent(summaryName)
+
+        // Always run xcodebuild against a deterministic working bundle path
+        // inside `evidence_dir`. When `summaryOnly` is true we move it to the
+        // cache directory after the summary is written.
+        let workingBundleURL = evidenceDirectory.appendingPathComponent(bundleName)
+        // xcodebuild refuses to overwrite an existing -resultBundlePath, so a
+        // re-run on the same ticket would otherwise fail. Wipe any previous
+        // bundle (and any orphan from an earlier summary-only run in the
+        // cache) before kicking off the test.
+        if fileManager.fileExists(atPath: workingBundleURL.path) {
+            try fileManager.removeItem(at: workingBundleURL)
+        }
+
+        let xcodebuildArguments = xcodebuildTestArguments(
+            config: config,
+            resultBundlePath: workingBundleURL.path
+        )
+        let testResult = try runner.run(toolPaths.xcrun, ["xcodebuild"] + xcodebuildArguments)
+
+        // `xcodebuild test` exits non-zero on either a build error (bundle is
+        // not produced) or a test failure (bundle IS produced). Distinguish
+        // by looking for the bundle on disk.
+        let bundleExists = fileManager.fileExists(atPath: workingBundleURL.path)
+        if !bundleExists {
+            // Build error fast-fail: still write a markdown summary so the PR
+            // / Jira comment surfaces what went wrong, then propagate the
+            // failure as a non-zero exit.
+            let markdown = XcresultMarkdown.renderBuildError(ticket: ticket, stderr: testResult.stderr)
+            try markdown.write(to: summaryURL, atomically: true, encoding: .utf8)
+            stdout("Wrote build-error summary to \(summaryURL.path)")
+            throw CLIError.commandFailed("xcodebuild test failed before producing a result bundle. \(testResult.stderr)")
+        }
+
+        // Bundle exists — parse summary even if `xcodebuild` returned non-zero
+        // (test failures are expected to surface in the markdown rather than
+        // crash the CLI).
+        let summaryArguments = [
+            "xcresulttool", "get", "test-results", "summary",
+            "--path", workingBundleURL.path
+        ]
+        let summaryResult = try runner.run(toolPaths.xcrun, summaryArguments)
+        guard summaryResult.exitCode == 0 else {
+            throw CLIError.commandFailed("xcresulttool failed to summarize \(workingBundleURL.path). \(summaryResult.stderr)")
+        }
+
+        let parsed = try XcresultSummary.parse(summaryResult.stdout)
+        let markdown = XcresultMarkdown.render(parsed, ticket: ticket)
+        try markdown.write(to: summaryURL, atomically: true, encoding: .utf8)
+        stdout("Wrote test summary to \(summaryURL.path)")
+
+        if summaryOnly {
+            // Move the bundle out of the committed evidence directory and
+            // into the user's cache so it remains inspectable locally without
+            // bloating the repo.
+            try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+            let cachedBundleURL = cacheDirectory.appendingPathComponent(bundleName)
+            if fileManager.fileExists(atPath: cachedBundleURL.path) {
+                try fileManager.removeItem(at: cachedBundleURL)
+            }
+            try fileManager.moveItem(at: workingBundleURL, to: cachedBundleURL)
+            stdout("Cached full xcresult bundle at \(cachedBundleURL.path)")
+        } else {
+            stdout("Captured xcresult bundle at \(workingBundleURL.path)")
+        }
+
+        // The markdown is now persisted regardless of pass/fail state. If the
+        // underlying `xcodebuild test` reported failures, propagate that as a
+        // non-zero CLI exit so CI catches the regression — `<KEY>-tests.md`
+        // is still authoritative for the PR comment.
+        if testResult.exitCode != 0 {
+            throw CLIError.commandFailed("xcodebuild test reported \(parsed.failedTests) failure(s). See \(summaryURL.path).")
         }
     }
 
