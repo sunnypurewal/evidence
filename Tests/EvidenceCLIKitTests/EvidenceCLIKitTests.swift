@@ -1,4 +1,5 @@
 import EvidenceCLIKit
+import CryptoKit
 import Foundation
 import XCTest
 
@@ -277,7 +278,141 @@ final class EvidenceCLIKitTests: XCTestCase {
         }
     }
 
-    // MARK: - xcresult bundle capture (RIDDIM-33)
+    // MARK: - App Store Connect screenshot uploads
+
+    func testConfigParsesAppStoreConnectTable() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+
+        [app_store_connect]
+        key_id = "ABC123DEFG"
+        issuer_id = "00000000-0000-0000-0000-000000000000"
+        p8_path = ".keys/AuthKey_ABC123DEFG.p8"
+        app_id = "1234567890"
+        """)
+
+        let config = try EvidenceConfig.parse(document)
+
+        XCTAssertEqual(
+            config.appStoreConnect,
+            AppStoreConnectConfig(
+                keyID: "ABC123DEFG",
+                issuerID: "00000000-0000-0000-0000-000000000000",
+                p8Path: ".keys/AuthKey_ABC123DEFG.p8",
+                appID: "1234567890"
+            )
+        )
+    }
+
+    func testUploadScreenshotsDryRunListsHashMatchesWithoutMutating() throws {
+        let directory = try appStoreProject()
+        let image = try writeAppStorePNG(in: directory, path: "docs/build-evidence/en-US/6.9/01-home.png", width: 1290, height: 2796)
+        let checksum = Insecure.MD5.hash(data: image).map { String(format: "%02x", $0) }.joined()
+        let http = MockHTTPClient(responses: [
+            .json(appStoreVersionsJSON(localizationID: "loc-en", locale: "en-US")),
+            .json(screenshotSetsJSON(setID: "set-67", displayType: "APP_IPHONE_67", screenshotID: "shot-1", checksum: checksum))
+        ])
+        var output: [String] = []
+        let cli = testCLI(directory: directory, runner: RecordingRunner(), stdout: { output.append($0) }, httpClient: http)
+
+        try cli.execute(["upload-screenshots", "--dry-run"])
+
+        let rendered = output.joined(separator: "\n")
+        XCTAssertTrue(rendered.contains("APP_IPHONE_67"))
+        XCTAssertTrue(rendered.contains("✓"))
+        XCTAssertTrue(rendered.contains("skip"))
+        XCTAssertTrue(rendered.contains("Dry run"))
+        XCTAssertEqual(http.requests.map(\.method), ["GET", "GET"])
+    }
+
+    func testUploadScreenshotsRejectsDimensionMismatchBeforeCallingASC() throws {
+        let directory = try appStoreProject()
+        _ = try writeAppStorePNG(in: directory, path: "docs/build-evidence/en-US/6.9/01-home.png", width: 100, height: 100)
+        let http = MockHTTPClient()
+        let cli = testCLI(directory: directory, runner: RecordingRunner(), httpClient: http)
+
+        XCTAssertThrowsError(try cli.execute(["upload-screenshots", "--dry-run"])) { error in
+            guard case .usage(let message) = (error as? CLIError) else {
+                return XCTFail("expected usage error, got \(error)")
+            }
+            XCTAssertTrue(message.contains("requires 1290x2796"))
+        }
+        XCTAssertEqual(http.requests.count, 0)
+    }
+
+    func testUploadScreenshotsMapsIPadElevenToAppStoreDisplayType() throws {
+        XCTAssertEqual(AppStoreScreenshotDisplayType.targetMap["ipad-11"], "APP_IPAD_PRO_3GEN_11")
+    }
+
+    func testUploadScreenshotsFiltersLocaleLayout() throws {
+        let directory = try appStoreProject()
+        _ = try writeAppStorePNG(in: directory, path: "docs/build-evidence/en-US/6.9/01-home.png", width: 1290, height: 2796)
+        _ = try writeAppStorePNG(in: directory, path: "docs/build-evidence/fr-FR/6.9/01-accueil.png", width: 1290, height: 2796)
+        let http = MockHTTPClient(responses: [
+            .json(appStoreVersionsJSON(localizationID: "loc-fr", locale: "fr-FR")),
+            .json(screenshotSetsJSON(setID: "set-fr", displayType: "APP_IPHONE_67"))
+        ])
+        var output: [String] = []
+        let cli = testCLI(directory: directory, runner: RecordingRunner(), stdout: { output.append($0) }, httpClient: http)
+
+        try cli.execute(["upload-screenshots", "--dry-run", "--locale", "fr-FR"])
+
+        let rendered = output.joined(separator: "\n")
+        XCTAssertTrue(rendered.contains("fr-FR"))
+        XCTAssertTrue(rendered.contains("01-accueil.png"))
+        XCTAssertFalse(rendered.contains("en-US"))
+        XCTAssertFalse(rendered.contains("01-home.png"))
+    }
+
+    func testUploadScreenshotsPerformsReplaceWithResumableUploadOperations() throws {
+        let directory = try appStoreProject()
+        let image = try writeAppStorePNG(in: directory, path: "docs/build-evidence/en-US/6.9/01-home.png", width: 1290, height: 2796)
+        let checksum = Insecure.MD5.hash(data: image).map { String(format: "%02x", $0) }.joined()
+        let http = MockHTTPClient(responses: [
+            .json(appStoreVersionsJSON(localizationID: "loc-en", locale: "en-US")),
+            .json(screenshotSetsJSON(setID: "set-67", displayType: "APP_IPHONE_67", screenshotID: "old-shot", checksum: "different")),
+            .empty(statusCode: 204),
+            .json(createdScreenshotJSON(id: "new-shot", uploadURL: "https://uploads.example.com/part", length: image.count)),
+            .empty(statusCode: 200),
+            .json(["data": ["id": "new-shot", "type": "appScreenshots"]])
+        ])
+        var output: [String] = []
+        let cli = testCLI(directory: directory, runner: RecordingRunner(), stdout: { output.append($0) }, httpClient: http)
+
+        try cli.execute(["upload-screenshots"])
+
+        XCTAssertEqual(http.requests.map(\.method), ["GET", "GET", "DELETE", "POST", "PUT", "PATCH"])
+        XCTAssertEqual(http.requests[4].url.absoluteString, "https://uploads.example.com/part")
+        XCTAssertEqual(http.requests[4].body, image)
+        let patchBody = try XCTUnwrap(http.requests[5].body)
+        let patchJSON = try XCTUnwrap(try JSONSerialization.jsonObject(with: patchBody) as? [String: Any])
+        let data = try XCTUnwrap(patchJSON["data"] as? [String: Any])
+        let attributes = try XCTUnwrap(data["attributes"] as? [String: Any])
+        XCTAssertEqual(attributes["uploaded"] as? Bool, true)
+        XCTAssertEqual(attributes["sourceFileChecksum"] as? String, checksum)
+        XCTAssertTrue(output.joined(separator: "\n").contains("Uploaded en-US/APP_IPHONE_67/01-home.png"))
+    }
+
+    func testUploadScreenshotsSurfacesASCAPIFailure() throws {
+        let directory = try appStoreProject()
+        _ = try writeAppStorePNG(in: directory, path: "docs/build-evidence/en-US/6.9/01-home.png", width: 1290, height: 2796)
+        let http = MockHTTPClient(responses: [
+            .failure(statusCode: 401, message: "invalid token")
+        ])
+        let cli = testCLI(directory: directory, runner: RecordingRunner(), httpClient: http)
+
+        XCTAssertThrowsError(try cli.execute(["upload-screenshots", "--dry-run"])) { error in
+            guard case .commandFailed(let message) = (error as? CLIError) else {
+                return XCTFail("expected commandFailed, got \(error)")
+            }
+            XCTAssertTrue(message.contains("HTTP 401"))
+            XCTAssertTrue(message.contains("invalid token"))
+        }
+    }
+
+    // MARK: - xcresult bundle capture
 
     private static let cleanRunSummaryJSON = """
     {
@@ -564,7 +699,7 @@ final class EvidenceCLIKitTests: XCTestCase {
         )
     }
 
-    // MARK: - RIDDIM-22: visual regression mode
+    // MARK: - visual regression mode
 
     func testDiffConfigParsesIgnoreRegionsAndDefaults() throws {
         let document = try TOMLDocument.parse("""
@@ -893,17 +1028,118 @@ final class EvidenceCLIKitTests: XCTestCase {
         return directory
     }
 
+    private func appStoreProject() throws -> URL {
+        let directory = try configuredProject(extraLines: [
+            "",
+            "[app_store_connect]",
+            "key_id = \"ABC123DEFG\"",
+            "issuer_id = \"00000000-0000-0000-0000-000000000000\"",
+            "p8_path = \".keys/AuthKey_ABC123DEFG.p8\"",
+            "app_id = \"1234567890\""
+        ])
+        let keyURL = directory.appendingPathComponent(".keys/AuthKey_ABC123DEFG.p8")
+        try FileManager.default.createDirectory(at: keyURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try P256.Signing.PrivateKey().pemRepresentation.write(to: keyURL, atomically: true, encoding: .utf8)
+        return directory
+    }
+
+    @discardableResult
+    private func writeAppStorePNG(in directory: URL, path: String, width: Int, height: Int) throws -> Data {
+        let url = directory.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var data = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        data.append(contentsOf: [0x00, 0x00, 0x00, 0x0D])
+        data.append(contentsOf: Array("IHDR".utf8))
+        func appendUInt32(_ value: Int) {
+            data.append(UInt8((value >> 24) & 0xff))
+            data.append(UInt8((value >> 16) & 0xff))
+            data.append(UInt8((value >> 8) & 0xff))
+            data.append(UInt8(value & 0xff))
+        }
+        appendUInt32(width)
+        appendUInt32(height)
+        data.append(contentsOf: [0x08, 0x02, 0x00, 0x00, 0x00])
+        try data.write(to: url)
+        return data
+    }
+
+    private func appStoreVersionsJSON(localizationID: String, locale: String) -> [String: Any] {
+        [
+            "data": [["id": "version-1", "type": "appStoreVersions"]],
+            "included": [[
+                "id": localizationID,
+                "type": "appStoreVersionLocalizations",
+                "attributes": ["locale": locale]
+            ]]
+        ]
+    }
+
+    private func screenshotSetsJSON(
+        setID: String,
+        displayType: String,
+        screenshotID: String? = nil,
+        checksum: String? = nil
+    ) -> [String: Any] {
+        var included: [[String: Any]] = []
+        if let screenshotID {
+            included.append([
+                "id": screenshotID,
+                "type": "appScreenshots",
+                "attributes": [
+                    "fileName": "01-home.png",
+                    "sortOrder": 1,
+                    "sourceFileChecksum": checksum ?? ""
+                ],
+                "relationships": [
+                    "appScreenshotSet": [
+                        "data": ["id": setID, "type": "appScreenshotSets"]
+                    ]
+                ]
+            ])
+        }
+        return [
+            "data": [[
+                "id": setID,
+                "type": "appScreenshotSets",
+                "attributes": ["screenshotDisplayType": displayType]
+            ]],
+            "included": included
+        ]
+    }
+
+    private func createdScreenshotJSON(id: String, uploadURL: String, length: Int) -> [String: Any] {
+        [
+            "data": [
+                "id": id,
+                "type": "appScreenshots",
+                "attributes": [
+                    "uploadOperations": [[
+                        "method": "PUT",
+                        "url": uploadURL,
+                        "offset": 0,
+                        "length": length,
+                        "requestHeaders": [
+                            ["name": "Content-Type", "value": "image/png"]
+                        ]
+                    ]]
+                ]
+            ]
+        ]
+    }
+
     private func testCLI(
         directory: URL,
         runner: RecordingRunner,
         stdout: @escaping (String) -> Void = { _ in },
-        cacheDirectory: URL? = nil
+        cacheDirectory: URL? = nil,
+        httpClient: HTTPClient = MockHTTPClient()
     ) -> EvidenceCLI {
         EvidenceCLI(
             runner: runner,
             stdout: stdout,
             currentDirectory: directory,
             toolPaths: ToolPaths(xcrun: "/bin/echo", magick: "/bin/echo", ffmpeg: "/bin/echo", git: "/bin/echo"),
+            httpClient: httpClient,
             cacheDirectory: cacheDirectory ?? directory.appendingPathComponent("evidence-cache", isDirectory: true)
         )
     }
@@ -911,6 +1147,40 @@ final class EvidenceCLIKitTests: XCTestCase {
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    }
+}
+
+fileprivate final class MockHTTPClient: HTTPClient {
+    enum Response {
+        case json([String: Any], statusCode: Int = 200)
+        case empty(statusCode: Int)
+        case failure(statusCode: Int, message: String)
+    }
+
+    var responses: [Response]
+    private(set) var requests: [HTTPRequest] = []
+
+    init(responses: [Response] = []) {
+        self.responses = responses
+    }
+
+    func send(_ request: HTTPRequest) throws -> HTTPResponse {
+        requests.append(request)
+        guard !responses.isEmpty else {
+            return HTTPResponse(statusCode: 200)
+        }
+        let response = responses.removeFirst()
+        switch response {
+        case let .json(json, statusCode):
+            return HTTPResponse(
+                statusCode: statusCode,
+                body: try JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])
+            )
+        case let .empty(statusCode):
+            return HTTPResponse(statusCode: statusCode)
+        case let .failure(statusCode, message):
+            return HTTPResponse(statusCode: statusCode, body: Data(message.utf8))
+        }
     }
 }
 

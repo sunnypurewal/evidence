@@ -11,7 +11,7 @@ final class ActionDefinitionTests: XCTestCase {
     }
 
     func testRepositoryActionYmlGatesPRCommentOnTokenPresence() throws {
-        // RIDDIM-30 acceptance: the PR-comment step must no-op cleanly when
+        // Regression coverage: the PR-comment step must no-op cleanly when
         // the caller hasn't supplied a token. We assert the structural gate
         // in `action.yml` rather than executing the composite action.
         let actionURL = repositoryRoot().appendingPathComponent("action.yml")
@@ -89,7 +89,7 @@ final class ActionDefinitionTests: XCTestCase {
     }
 
     func testValidatorRejectsSecretsReferenceInDescription() {
-        // Reproduces RIDDIM-30: a literal `${{ secrets.GITHUB_TOKEN }}` inside
+        // Reproduces a runner failure: a literal `${{ secrets.GITHUB_TOKEN }}` inside
         // an input description causes the runner to fail with
         // "Unrecognized named-value: 'secrets'" because composite actions do
         // not have access to the `secrets` context. The validator must catch

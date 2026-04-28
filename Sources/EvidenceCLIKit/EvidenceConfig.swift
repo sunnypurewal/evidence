@@ -14,6 +14,7 @@ public struct EvidenceConfig: Equatable {
     public var previewDefaults: PreviewDefaults
     public var xcresult: XcresultConfig
     public var diff: DiffConfig
+    public var appStoreConnect: AppStoreConnectConfig?
 
     public init(
         scheme: String,
@@ -28,7 +29,8 @@ public struct EvidenceConfig: Equatable {
         xcodeProject: String? = nil,
         previewDefaults: PreviewDefaults = PreviewDefaults(),
         xcresult: XcresultConfig = XcresultConfig(),
-        diff: DiffConfig = DiffConfig()
+        diff: DiffConfig = DiffConfig(),
+        appStoreConnect: AppStoreConnectConfig? = nil
     ) {
         self.scheme = scheme
         self.bundleID = bundleID
@@ -43,6 +45,7 @@ public struct EvidenceConfig: Equatable {
         self.previewDefaults = previewDefaults
         self.xcresult = xcresult
         self.diff = diff
+        self.appStoreConnect = appStoreConnect
     }
 
     public static func load(from url: URL) throws -> EvidenceConfig {
@@ -107,7 +110,46 @@ public struct EvidenceConfig: Equatable {
                 ) ?? "docs/baselines",
                 acceptAllowDirty: try document.optionalBool("diff_accept_allow_dirty", default: false) ?? false,
                 fuzzPercent: try document.optionalDouble("diff_fuzz_percent", default: 0, minimum: 0) ?? 0
-            )
+            ),
+            appStoreConnect: try AppStoreConnectConfig.parse(document)
+        )
+    }
+}
+
+public struct AppStoreConnectConfig: Equatable {
+    public var keyID: String
+    public var issuerID: String
+    public var p8Path: String
+    public var appID: String
+
+    public init(keyID: String, issuerID: String, p8Path: String, appID: String) {
+        self.keyID = keyID
+        self.issuerID = issuerID
+        self.p8Path = p8Path
+        self.appID = appID
+    }
+
+    public static func parse(_ document: TOMLDocument) throws -> AppStoreConnectConfig? {
+        let keyPrefix = "app_store_connect."
+        let legacyPrefix = "app_store_connect_"
+        let tablePresent = document.string(keyPrefix + "key_id") != nil
+            || document.string(keyPrefix + "issuer_id") != nil
+            || document.string(keyPrefix + "p8_path") != nil
+            || document.string(keyPrefix + "app_id") != nil
+        let legacyPresent = document.string(legacyPrefix + "key_id") != nil
+            || document.string(legacyPrefix + "issuer_id") != nil
+            || document.string(legacyPrefix + "p8_path") != nil
+            || document.string(legacyPrefix + "app_id") != nil
+        guard tablePresent || legacyPresent else {
+            return nil
+        }
+
+        let prefix = tablePresent ? keyPrefix : legacyPrefix
+        return AppStoreConnectConfig(
+            keyID: try document.requiredString(prefix + "key_id"),
+            issuerID: try document.requiredString(prefix + "issuer_id"),
+            p8Path: try document.requiredString(prefix + "p8_path"),
+            appID: try document.requiredString(prefix + "app_id")
         )
     }
 }
@@ -217,7 +259,7 @@ public struct DiffRegion: Equatable {
 /// The `.evidence.toml` keys are flat (`xcresult_enabled`,
 /// `xcresult_keep_full_bundle`) rather than a `[xcresult]` table because the
 /// project's TOML parser is intentionally line-based (no nested tables). The
-/// behaviour matches the table-form description in RIDDIM-33: setting
+/// behaviour matches the table-form description: setting
 /// `xcresult_enabled = true` is equivalent to `[xcresult] enabled = true` and
 /// `xcresult_keep_full_bundle` mirrors `keep_full_bundle`.
 public struct XcresultConfig: Equatable {
