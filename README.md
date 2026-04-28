@@ -70,7 +70,11 @@ evidence capture-screenshots
 evidence capture-evidence --ticket APP-123
 evidence resize --input raw.png --target 6.9 --output app-store.png
 evidence record-preview --input capture.mov --output preview.mp4 --trim-start 0 --trim-end 30
-evidence render-marketing --scene scene.svg --output scene.png
+evidence render-marketing --scene scene.json --svg scene.svg --output scene.png
 ```
 
 The CLI wraps Xcode simulator tooling, ImageMagick, and ffmpeg with explicit checks so missing local dependencies fail with actionable messages.
+
+Use raw capture when the screenshot should show the app exactly as it runs. Use `render-marketing` when the App Store asset needs a composed layout with headlines, badges, metrics, timelines, device framing, or source text around app imagery.
+
+Marketing scenes are JSON files with app-owned copy and brand values. See `Examples/Marketing/scene.json` for a complete example using the supported row kinds: `left`, `right`, `badge`, `metric`, `timeline`, `stage`, `row`, and `compose`.

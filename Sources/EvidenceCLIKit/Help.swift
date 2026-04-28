@@ -51,15 +51,16 @@ public enum Help {
     """
 
     public static let renderMarketing = """
-    evidence render-marketing --scene <svg-or-image> --output <png>
+    evidence render-marketing --scene <scene.json> --output <png> [--svg <svg>] [--target 6.9]
 
-    Renders a marketing screenshot through the configured renderer dependency.
+    Renders a marketing screenshot from a structured JSON scene file and writes
+    both an intermediate SVG and final PNG.
 
     Requires:
       ImageMagick `magick`
 
     Example:
-      evidence render-marketing --scene scene.svg --output scene.png
+      evidence render-marketing --scene scene.json --svg scene.svg --output scene.png --target 6.9
     """
 
     public static let recordPreview = """
