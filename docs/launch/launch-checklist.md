@@ -1,6 +1,6 @@
 # Launch Checklist
 
-Designated launch window: **Tuesday, May 12, 2026, 10:00-14:00 America/Toronto**.
+Launch timing: set before publishing.
 
 Primary URL: <https://github.com/sunnypurewal/evidence>
 
