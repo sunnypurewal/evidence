@@ -1,6 +1,6 @@
 # evidence
 
-[![swift-test](https://github.com/sunnypurewal/evidence/actions/workflows/swift-test.yml/badge.svg?branch=main)](https://github.com/sunnypurewal/evidence/actions/workflows/swift-test.yml)
+[![swift-test](https://github.com/RiddimSoftware/evidence/actions/workflows/swift-test.yml/badge.svg?branch=main)](https://github.com/RiddimSoftware/evidence/actions/workflows/swift-test.yml)
 [![Use on GitHub Marketplace](https://img.shields.io/badge/Marketplace-evidence-purple?logo=githubactions)](https://github.com/marketplace/actions/evidence)
 
 `evidence` captures repeatable proof that app flows work, using real iOS app runs instead of manual replay.
@@ -33,7 +33,7 @@ brew install imagemagick ffmpeg
 Clone and verify the package:
 
 ```sh
-git clone https://github.com/sunnypurewal/evidence.git
+git clone https://github.com/RiddimSoftware/evidence.git
 cd evidence
 swift test
 swift run evidence -- --help
@@ -254,7 +254,7 @@ jobs:
         run: |
           mkdir -p .secrets
           printf '%s' "$ASC_PRIVATE_KEY" > .secrets/AuthKey_ABC123DEFG.p8
-      - uses: sunnypurewal/evidence@v0
+      - uses: RiddimSoftware/evidence@v0
         with:
           subcommand: upload-screenshots
           extra-args: '--dry-run'
@@ -273,7 +273,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: sunnypurewal/evidence@v0
+      - uses: RiddimSoftware/evidence@v0
         with:
           subcommand: capture-evidence
           ticket: ${{ github.event.pull_request.title }}

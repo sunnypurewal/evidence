@@ -20,4 +20,4 @@ Blog link placeholder: `https://example.com/blog/introducing-evidence`
 
 9. The best first flow to automate is the one someone still checks manually before every release: onboarding, purchase, import, settings, or release notes. https://example.com/blog/introducing-evidence
 
-10. Try it here: https://github.com/sunnypurewal/evidence. The package is MIT licensed, public, and ready for issues, examples, and small first contributions. https://example.com/blog/introducing-evidence
+10. Try it here: https://github.com/RiddimSoftware/evidence. The package is MIT licensed, public, and ready for issues, examples, and small first contributions. https://example.com/blog/introducing-evidence

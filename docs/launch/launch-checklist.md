@@ -2,7 +2,7 @@
 
 Launch timing: set before publishing.
 
-Primary URL: <https://github.com/sunnypurewal/evidence>
+Primary URL: <https://github.com/RiddimSoftware/evidence>
 
 Blog URL placeholder: `https://example.com/blog/introducing-evidence`
 

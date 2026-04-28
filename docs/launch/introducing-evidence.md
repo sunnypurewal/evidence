@@ -105,7 +105,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: sunnypurewal/evidence@v0
+      - uses: RiddimSoftware/evidence@v0
         with:
           subcommand: capture-evidence
           ticket: ${{ github.event.pull_request.title }}
@@ -158,7 +158,7 @@ The current package is iOS-first and practical rather than universal. It assumes
 Clone the repo and run the tests:
 
 ```sh
-git clone https://github.com/sunnypurewal/evidence.git
+git clone https://github.com/RiddimSoftware/evidence.git
 cd evidence
 swift test
 swift run evidence -- --help

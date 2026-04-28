@@ -6,7 +6,7 @@ Target length: 55-60 seconds.
 
 ```sh
 # 0s - show the project and help surface
-git clone https://github.com/sunnypurewal/evidence.git
+git clone https://github.com/RiddimSoftware/evidence.git
 cd evidence
 swift run evidence -- --help
 

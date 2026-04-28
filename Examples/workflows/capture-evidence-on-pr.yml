@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Capture evidence
-        uses: sunnypurewal/evidence@v0
+        uses: RiddimSoftware/evidence@v0
         with:
           subcommand: capture-evidence
           ticket: ${{ github.event.pull_request.title }}

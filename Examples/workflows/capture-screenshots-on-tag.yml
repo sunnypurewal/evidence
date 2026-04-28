@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Capture App Store screenshots
-        uses: sunnypurewal/evidence@v0
+        uses: RiddimSoftware/evidence@v0
         with:
           subcommand: capture-screenshots
           simulator: 'iPhone 16 Pro Max'

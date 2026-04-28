@@ -4,7 +4,7 @@ Manual app walkthroughs are still part of a lot of iOS release processes. Even w
 
 That check is useful. The fragile part is that it often disappears. The proof lives in a local screenshot, a short recording, or a chat message instead of the repo.
 
-[`evidence`](https://github.com/sunnypurewal/evidence) is an open-source Swift package and CLI for making that proof repeatable. It uses real iOS app runs through XCUITest and writes screenshot, visual diff, build evidence, preview-video, and App Store screenshot artifacts to predictable paths.
+[`evidence`](https://github.com/RiddimSoftware/evidence) is an open-source Swift package and CLI for making that proof repeatable. It uses real iOS app runs through XCUITest and writes screenshot, visual diff, build evidence, preview-video, and App Store screenshot artifacts to predictable paths.
 
 ## Describe the app state, then capture it
 
@@ -79,7 +79,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: sunnypurewal/evidence@v0
+      - uses: RiddimSoftware/evidence@v0
         with:
           subcommand: capture-evidence
           ticket: ${{ github.event.pull_request.title }}
@@ -95,6 +95,6 @@ Evidence is not meant to replace unit tests, snapshot-testing libraries, or huma
 
 Use it when a reviewer or release owner needs to see that a real app flow still works.
 
-Repo: <https://github.com/sunnypurewal/evidence>
+Repo: <https://github.com/RiddimSoftware/evidence>
 
 Suggested tags: `swift`, `ios`, `testing`, `automation`

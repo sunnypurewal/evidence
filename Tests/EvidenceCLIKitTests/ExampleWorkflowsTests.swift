@@ -75,7 +75,7 @@ final class ExampleWorkflowsTests: XCTestCase {
 
     private func parseInputReferences(from workflow: String) -> Set<String> {
         var seen: Set<String> = []
-        // Capture keys from `with:` blocks that follow a `uses: sunnypurewal/evidence...` line.
+        // Capture keys from `with:` blocks that follow a `uses: RiddimSoftware/evidence...` line.
         // Other actions (e.g. actions/upload-artifact) may declare their own inputs that are
         // unrelated to the evidence action surface.
         let lines = workflow.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
@@ -87,7 +87,7 @@ final class ExampleWorkflowsTests: XCTestCase {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
             if trimmed.hasPrefix("uses:") {
-                pendingEvidenceUses = trimmed.contains("sunnypurewal/evidence")
+                pendingEvidenceUses = trimmed.contains("RiddimSoftware/evidence")
                 inWithBlock = false
                 continue
             }

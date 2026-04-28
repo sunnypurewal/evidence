@@ -3,7 +3,7 @@
 This is a text version of the 60-second terminal capture. Use it as the source of truth for captions, subtitles, or a README-linked demo when a video/GIF is not available.
 
 ```text
-$ git clone https://github.com/sunnypurewal/evidence.git
+$ git clone https://github.com/RiddimSoftware/evidence.git
 $ cd evidence
 $ swift run evidence -- --help
 
@@ -42,11 +42,11 @@ Uploads PNG screenshots from evidence_dir to App Store Connect screenshot slots 
 
 $ sed -n '1,120p' Examples/workflows/capture-evidence-on-pr.yml
 
-uses: sunnypurewal/evidence@v0
+uses: RiddimSoftware/evidence@v0
 with:
   subcommand: capture-evidence
   ticket: ${{ github.event.pull_request.title }}
   comment-on-pr: 'true'
 ```
 
-End card: `https://github.com/sunnypurewal/evidence`
+End card: `https://github.com/RiddimSoftware/evidence`

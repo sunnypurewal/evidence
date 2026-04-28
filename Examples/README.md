@@ -24,5 +24,5 @@ real CI users supply their own app.
 ## Marketplace listing
 
 The Action is published to the GitHub Marketplace as
-[`sunnypurewal/evidence`](https://github.com/marketplace/actions/evidence).
+[`RiddimSoftware/evidence`](https://github.com/marketplace/actions/evidence).
 Pin to a major version (`@v0`) for stability or to a SHA for reproducibility.

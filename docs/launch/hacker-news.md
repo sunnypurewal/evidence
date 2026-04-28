@@ -10,7 +10,7 @@ Recommended title: **Show HN: evidence - repeatable proof artifacts for iOS app 
 
 ## URL
 
-https://github.com/sunnypurewal/evidence
+https://github.com/RiddimSoftware/evidence
 
 ## First Comment Draft
 

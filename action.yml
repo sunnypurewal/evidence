@@ -34,7 +34,7 @@ inputs:
     required: false
     default: ''
   evidence-ref:
-    description: 'Git ref of sunnypurewal/evidence to build the CLI from. Defaults to the action ref so the CLI matches the action version.'
+    description: 'Git ref of RiddimSoftware/evidence to build the CLI from. Defaults to the action ref so the CLI matches the action version.'
     required: false
     default: ''
   comment-on-pr:
@@ -120,8 +120,8 @@ runs:
         build_dir="${RUNNER_TEMP}/evidence-build"
         mkdir -p "${build_dir}"
         if [ ! -d "${build_dir}/.git" ]; then
-          git clone --depth 1 --branch "${ref}" https://github.com/sunnypurewal/evidence.git "${build_dir}" \
-            || git clone https://github.com/sunnypurewal/evidence.git "${build_dir}"
+          git clone --depth 1 --branch "${ref}" https://github.com/RiddimSoftware/evidence.git "${build_dir}" \
+            || git clone https://github.com/RiddimSoftware/evidence.git "${build_dir}"
           git -C "${build_dir}" checkout "${ref}" || true
         fi
         cd "${build_dir}"
@@ -293,7 +293,7 @@ runs:
           echo
           echo "</details>"
           echo
-          echo "_Posted by the [evidence GitHub Action](https://github.com/sunnypurewal/evidence)._"
+          echo "_Posted by the [evidence GitHub Action](https://github.com/RiddimSoftware/evidence)._"
         } > "${body_file}"
 
         if [ -z "${PR_NUMBER}" ]; then
