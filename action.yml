@@ -75,16 +75,20 @@ runs:
         fi
         echo "ref=${ref}" >> "$GITHUB_OUTPUT"
 
-    - name: Cache Homebrew formulae
+    - name: Cache Homebrew downloads
       id: brew-cache
       uses: actions/cache@v4
       with:
+        # Cache the formula download tarballs and HOMEBREW_API metadata. We
+        # intentionally do NOT cache /opt/homebrew/Cellar — restoring those
+        # without running `brew link` leaves the binaries un-symlinked from
+        # /opt/homebrew/bin, which silently triggers a reinstall on warm runs.
+        # The downloads cache alone makes `brew install` skip the network
+        # tarball fetch, which is the slow part on macos-14 hosted runners.
         path: |
           ~/Library/Caches/Homebrew/downloads
           ~/Library/Caches/Homebrew/api
-          /opt/homebrew/Cellar/imagemagick
-          /opt/homebrew/Cellar/ffmpeg
-        key: evidence-brew-${{ runner.os }}-${{ runner.arch }}-imagemagick-ffmpeg-v1
+        key: evidence-brew-${{ runner.os }}-${{ runner.arch }}-imagemagick-ffmpeg-v2
 
     - name: Install ImageMagick and ffmpeg
       shell: bash
@@ -94,7 +98,7 @@ runs:
         command -v magick >/dev/null 2>&1 || missing+=(imagemagick)
         command -v ffmpeg >/dev/null 2>&1 || missing+=(ffmpeg)
         if [ ${#missing[@]} -eq 0 ]; then
-          echo "ImageMagick and ffmpeg already installed (cache hit)."
+          echo "ImageMagick and ffmpeg already installed."
         else
           echo "Installing missing tools: ${missing[*]}"
           brew install "${missing[@]}"
@@ -133,27 +137,31 @@ runs:
     - name: Boot simulator
       id: simulator
       shell: bash
+      env:
+        DEVICE_NAME: ${{ inputs.simulator }}
       run: |
         set -euo pipefail
-        device_name="${{ inputs.simulator }}"
         booted_udid=""
-        if [ -n "${device_name}" ]; then
-          booted_udid="$(xcrun simctl list devices available -j | python3 -c "
-        import json,sys
-        target=sys.argv[1]
-        data=json.load(sys.stdin)
-        for runtime, devices in data.get('devices', {}).items():
+        if [ -n "${DEVICE_NAME}" ]; then
+          # Resolve the UDID for the requested device name from `simctl list`.
+          devices_json="$(xcrun simctl list devices available -j)"
+          booted_udid="$(DEVICES_JSON="${devices_json}" DEVICE_NAME="${DEVICE_NAME}" python3 - <<'PY'
+        import json, os, sys
+        data = json.loads(os.environ["DEVICES_JSON"])
+        target = os.environ["DEVICE_NAME"]
+        for _runtime, devices in data.get("devices", {}).items():
             for d in devices:
-                if d.get('name') == target and d.get('isAvailable', True):
-                    print(d['udid'])
+                if d.get("name") == target and d.get("isAvailable", True):
+                    print(d["udid"])
                     sys.exit(0)
         sys.exit(1)
-        " "${device_name}")" || true
+        PY
+        )" || true
           if [ -z "${booted_udid}" ]; then
-            echo "::warning::Simulator named '${device_name}' not found; falling back to .evidence.toml simulator_udid."
+            echo "::warning::Simulator named '${DEVICE_NAME}' not found; falling back to .evidence.toml simulator_udid."
           else
             xcrun simctl boot "${booted_udid}" >/dev/null 2>&1 || true
-            echo "Booted simulator ${device_name} (${booted_udid})."
+            echo "Booted simulator ${DEVICE_NAME} (${booted_udid})."
           fi
         fi
         echo "udid=${booted_udid}" >> "$GITHUB_OUTPUT"
@@ -233,7 +241,10 @@ runs:
 
         artifact_count=0
         if [ -d "${resolved_output_dir}" ]; then
-          artifact_count="$(find "${resolved_output_dir}" -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.mp4' -o -iname '*.mov' \) | wc -l | tr -d ' ')"
+          # `wc -l` consumes the full stream, so pipefail is safe here. Strip
+          # whitespace so the value is a clean integer for downstream comparisons.
+          raw_count="$(find "${resolved_output_dir}" -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.mp4' -o -iname '*.mov' \) | wc -l)"
+          artifact_count="$(echo "${raw_count}" | tr -d '[:space:]')"
         fi
         echo "output-dir=${resolved_output_dir}" >> "$GITHUB_OUTPUT"
         echo "artifact-count=${artifact_count}" >> "$GITHUB_OUTPUT"
@@ -246,8 +257,9 @@ runs:
         EVIDENCE_OUTPUT_DIR_RESOLVED: ${{ steps.run-evidence.outputs.output-dir }}
         EVIDENCE_SUBCOMMAND: ${{ inputs.subcommand }}
         EVIDENCE_ARTIFACT_COUNT: ${{ steps.run-evidence.outputs.artifact-count }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
       run: |
-        set -euo pipefail
+        set -uo pipefail
         if [ "${EVIDENCE_ARTIFACT_COUNT:-0}" = "0" ]; then
           echo "No artifacts produced; skipping PR comment."
           exit 0
@@ -259,6 +271,14 @@ runs:
         fi
 
         body_file="${RUNNER_TEMP}/evidence-pr-comment.md"
+        artifacts_file="${RUNNER_TEMP}/evidence-artifacts.txt"
+        # Collect up to 16 artifact paths into a tmpfile so SIGPIPE from `head`
+        # cannot break the surrounding pipefail-protected pipeline.
+        find "${out_dir}" -type f \
+          \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.mp4' -o -iname '*.mov' \) \
+          > "${artifacts_file}.all" || true
+        head -16 "${artifacts_file}.all" > "${artifacts_file}" || true
+
         {
           echo "### evidence: ${EVIDENCE_SUBCOMMAND}"
           echo
@@ -266,30 +286,32 @@ runs:
           echo
           echo "<details><summary>Artifacts</summary>"
           echo
-          # List up to 16 artifact paths relative to the repo.
-          find "${out_dir}" -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.mp4' -o -iname '*.mov' \) \
-            | head -16 \
-            | while read -r artifact; do
-              rel="${artifact#${GITHUB_WORKSPACE}/}"
-              echo "- \`${rel}\`"
-            done
+          while IFS= read -r artifact; do
+            rel="${artifact#${GITHUB_WORKSPACE}/}"
+            echo "- \`${rel}\`"
+          done < "${artifacts_file}"
           echo
           echo "</details>"
           echo
           echo "_Posted by the [evidence GitHub Action](https://github.com/sunnypurewal/evidence)._"
         } > "${body_file}"
 
-        # Use gh to post the comment when available; fall back to curl.
+        if [ -z "${PR_NUMBER}" ]; then
+          echo "::warning::Could not determine pull request number; skipping comment."
+          exit 0
+        fi
+
         if command -v gh >/dev/null 2>&1; then
-          gh pr comment "${GITHUB_REF_NAME%%/*}" --body-file "${body_file}" --repo "${GITHUB_REPOSITORY}" \
-            || gh api -X POST "/repos/${GITHUB_REPOSITORY}/issues/${{ github.event.pull_request.number }}/comments" \
-              -f body="$(cat "${body_file}")"
+          gh api -X POST \
+            "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            -f body="$(cat "${body_file}")"
         else
+          payload="$(BODY_FILE="${body_file}" python3 -c 'import json,os; print(json.dumps({"body": open(os.environ["BODY_FILE"]).read()}))')"
           curl -sSf -X POST \
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues/${{ github.event.pull_request.number }}/comments" \
-            --data "$(python3 -c 'import json,sys; print(json.dumps({"body": open(sys.argv[1]).read()}))' "${body_file}")"
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --data "${payload}"
         fi
 
     - name: Shut down simulator
