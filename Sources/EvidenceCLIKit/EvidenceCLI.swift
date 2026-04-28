@@ -117,13 +117,24 @@ public struct EvidenceCLI {
     }
 
     private func renderMarketing(_ arguments: [String], config: EvidenceConfig) throws {
-        let scene = try option("scene", in: arguments)
-        let output = try option("output", in: arguments)
-        try requireTool(toolPaths.magick, versionArguments: ["--version"], installHint: "Install ImageMagick, for example with `brew install imagemagick`.")
-        let result = try runner.run(toolPaths.magick, [scene, output])
-        guard result.exitCode == 0 else {
-            throw CLIError.commandFailed("Marketing render failed. \(result.stderr)")
+        let scenePath = try option("scene", in: arguments)
+        let outputPath = try option("output", in: arguments)
+        let targetName = optionValue("target", in: arguments) ?? config.screenshotTargets.first?.name ?? "6.9"
+        guard let target = ScreenshotTarget(named: targetName) else {
+            throw CLIError.usage("Unknown marketing target '\(targetName)'. Run `evidence render-marketing --help`.")
         }
+
+        let sceneURL = currentDirectory.appendingPathComponent(scenePath)
+        let outputURL = currentDirectory.appendingPathComponent(outputPath)
+        let svgURL = currentDirectory.appendingPathComponent(
+            optionValue("svg", in: arguments) ?? outputURL.deletingPathExtension().appendingPathExtension("svg").path.replacingOccurrences(of: currentDirectory.path + "/", with: "")
+        )
+
+        try requireTool(toolPaths.magick, versionArguments: ["--version"], installHint: "Install ImageMagick, for example with `brew install imagemagick`.")
+        let renderer = MarketingRenderer(fileManager: fileManager, runner: runner, toolPaths: toolPaths)
+        let scene = try renderer.loadScene(from: sceneURL, target: target)
+        try renderer.render(scene: scene, svgURL: svgURL, pngURL: outputURL)
+        stdout("Rendered marketing screenshot at \(outputURL.path)")
     }
 
     private func recordPreview(_ arguments: [String], config: EvidenceConfig) throws {

@@ -1,0 +1,62 @@
+{
+  "scenes": [
+    {
+      "id": "launch",
+      "width": 1290,
+      "height": 2796,
+      "background": "#f8fafc",
+      "headline": "Proof that your app works",
+      "subhead": "Capture real flows and compose polished release assets.",
+      "source_text": "Generated with evidence",
+      "device_frame": {
+        "x": 760,
+        "y": 420,
+        "width": 360,
+        "height": 780,
+        "corner_radius": 58,
+        "fill": "#111827"
+      },
+      "rows": [
+        {
+          "kind": "badge",
+          "text": "Open source"
+        },
+        {
+          "kind": "metric",
+          "label": "Repeatable app states",
+          "value": "100%"
+        },
+        {
+          "kind": "timeline",
+          "title": "Evidence workflow",
+          "items": ["Launch", "Wait for anchors", "Capture", "Review"]
+        },
+        {
+          "kind": "compose",
+          "rows": [
+            {
+              "kind": "left",
+              "title": "Raw capture",
+              "text": "Use real simulator screenshots for proof."
+            },
+            {
+              "kind": "right",
+              "title": "Marketing render",
+              "text": "Compose App Store-ready visuals from data."
+            }
+          ]
+        },
+        {
+          "kind": "stage",
+          "label": "Release evidence",
+          "status": "Ready"
+        },
+        {
+          "kind": "row",
+          "title": "Portable schema",
+          "detail": "Keep app-specific copy and brand settings in the consuming repo."
+        }
+      ]
+    }
+  ]
+}
