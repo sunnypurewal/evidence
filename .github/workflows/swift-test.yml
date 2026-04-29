@@ -1,13 +1,6 @@
 name: swift-test
 
 on:
-  pull_request:
-    paths:
-      - 'Sources/**'
-      - 'Tests/**'
-      - 'Package.swift'
-      - 'Package.resolved'
-      - '.github/workflows/swift-test.yml'
   push:
     branches:
       - main
@@ -17,6 +10,7 @@ on:
       - 'Package.swift'
       - 'Package.resolved'
       - '.github/workflows/swift-test.yml'
+  workflow_dispatch:
 
 jobs:
   build-and-test:

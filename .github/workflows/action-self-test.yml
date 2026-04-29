@@ -1,14 +1,6 @@
 name: Action self-test
 
 on:
-  pull_request:
-    paths:
-      - 'action.yml'
-      - 'Examples/**'
-      - 'Sources/**'
-      - 'Tests/**'
-      - 'Package.swift'
-      - '.github/workflows/action-self-test.yml'
   push:
     branches:
       - main
@@ -19,6 +11,7 @@ on:
       - 'Tests/**'
       - 'Package.swift'
       - '.github/workflows/action-self-test.yml'
+  workflow_dispatch:
 
 jobs:
   lint-workflows:
