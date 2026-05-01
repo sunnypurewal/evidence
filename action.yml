@@ -1,6 +1,6 @@
 name: 'evidence'
 description: 'Run the evidence CLI on a macOS runner to capture screenshots, build evidence, marketing renders, preview videos, visual diffs, or App Store screenshot uploads from your iOS app.'
-author: 'sunnypurewal'
+author: 'RiddimSoftware'
 branding:
   icon: 'camera'
   color: 'purple'
