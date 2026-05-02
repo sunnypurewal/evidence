@@ -13,8 +13,6 @@ public enum Help {
       render-marketing      Render a marketing screenshot from a scene file.
       record-preview        Encode an App Preview-compatible video.
       capture-evidence      Capture a one-shot build evidence screenshot.
-      diff                  Compare current captures against committed baselines.
-      accept-baseline       Promote the latest run into the baseline directory.
       upload-screenshots    Upload screenshots to App Store Connect.
 
     Configuration:
@@ -24,7 +22,6 @@ public enum Help {
     Examples:
       evidence capture-evidence --ticket APP-123
       evidence resize --input raw.png --target 6.9 --output app-store.png
-      evidence diff --baseline docs/baselines --markdown docs/build-evidence/diff.md
       evidence upload-screenshots --dry-run
     """
 
@@ -118,60 +115,6 @@ public enum Help {
       evidence capture-evidence --ticket APP-123 --xcresult-summary-only
     """
 
-    public static let diff = """
-    evidence diff [--baseline <dir>] [--current <dir>] [--output <dir>] [--report <path>] [--markdown <path>] [--threshold <number>]
-
-    Compares the latest screenshot run against a directory of committed
-    baselines and writes:
-
-      <output>/<scene>.png            (per-scene diff PNG)
-      <output>/diff-report.json       (structured report)
-
-    Per-device baselines are matched by relative path: a current capture at
-    `<evidence_dir>/iPhone 16/home.png` is compared against
-    `<baseline>/iPhone 16/home.png`.
-
-    Tolerance is read from `.evidence.toml` (`diff_threshold`, expressed as a
-    fraction 0.0–1.0) and may be overridden with `--threshold`. Values >1 are
-    treated as percent-style (e.g. `--threshold 5` => 0.05).
-
-    Ignore regions are read from `.evidence.toml`:
-      diff_ignore_regions = ["0,0,300x60", "0,2700,1290x96"]
-
-    Each entry is `X,Y,WxH` in pixel units. Both the baseline and the current
-    capture are masked black on those rectangles before comparison.
-
-    Exit codes:
-      0   every scene matched within threshold
-      1   one or more scenes exceeded the threshold (regression)
-      2   one or more expected scenes had no baseline image
-
-    Requires:
-      ImageMagick `magick`
-
-    Example:
-      evidence diff --baseline docs/baselines --markdown docs/build-evidence/diff.md
-    """
-
-    public static let acceptBaseline = """
-    evidence accept-baseline [--source <dir>] [--baseline <dir>] [--force]
-
-    Copies every PNG from the latest screenshot run into the baseline
-    directory, replacing any existing image. Use this after intentional UI
-    changes ship.
-
-    Refuses to run when `git status --porcelain` reports uncommitted changes,
-    since baselines are committed alongside the consumer's code. Override with
-    `--force` or set `diff_accept_allow_dirty = true` in .evidence.toml.
-
-    Defaults:
-      --source     evidence_dir from .evidence.toml
-      --baseline   diff_baseline_dir from .evidence.toml (default docs/baselines)
-
-    Example:
-      evidence accept-baseline
-    """
-
     public static let uploadScreenshots = """
     evidence upload-screenshots [--dry-run] [--locale en-US]
 
@@ -213,10 +156,6 @@ public enum Help {
             recordPreview
         case "capture-evidence":
             captureEvidence
-        case "diff":
-            diff
-        case "accept-baseline":
-            acceptBaseline
         case "upload-screenshots":
             uploadScreenshots
         default:

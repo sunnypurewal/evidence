@@ -17,10 +17,6 @@ inputs:
     description: 'Ticket key to pass to capture-evidence (e.g. APP-123). Required when subcommand is capture-evidence.'
     required: false
     default: ''
-  baseline-dir:
-    description: 'Baseline directory passed to evidence diff (--baseline). Defaults to diff_baseline_dir from .evidence.toml when empty.'
-    required: false
-    default: ''
   output-dir:
     description: 'Directory where evidence writes captured artifacts. Exposed to the CLI via EVIDENCE_OUTPUT_DIR.'
     required: false
@@ -174,7 +170,6 @@ runs:
         EVIDENCE_SUBCOMMAND: ${{ inputs.subcommand }}
         EVIDENCE_CONFIG: ${{ inputs.config }}
         EVIDENCE_TICKET: ${{ inputs.ticket }}
-        EVIDENCE_BASELINE_DIR: ${{ inputs.baseline-dir }}
         EVIDENCE_OUTPUT_DIR_INPUT: ${{ inputs.output-dir }}
         EVIDENCE_EXTRA_ARGS: ${{ inputs.extra-args }}
       run: |
@@ -206,11 +201,6 @@ runs:
               exit 1
             fi
             args+=("--ticket" "${EVIDENCE_TICKET}")
-            ;;
-          diff)
-            if [ -n "${EVIDENCE_BASELINE_DIR}" ]; then
-              args+=("--baseline" "${EVIDENCE_BASELINE_DIR}")
-            fi
             ;;
         esac
 
