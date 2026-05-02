@@ -13,7 +13,6 @@ public struct EvidenceConfig: Equatable {
     public var xcodeProject: String?
     public var previewDefaults: PreviewDefaults
     public var xcresult: XcresultConfig
-    public var diff: DiffConfig
     public var appStoreConnect: AppStoreConnectConfig?
 
     public init(
@@ -29,7 +28,6 @@ public struct EvidenceConfig: Equatable {
         xcodeProject: String? = nil,
         previewDefaults: PreviewDefaults = PreviewDefaults(),
         xcresult: XcresultConfig = XcresultConfig(),
-        diff: DiffConfig = DiffConfig(),
         appStoreConnect: AppStoreConnectConfig? = nil
     ) {
         self.scheme = scheme
@@ -44,7 +42,6 @@ public struct EvidenceConfig: Equatable {
         self.xcodeProject = xcodeProject
         self.previewDefaults = previewDefaults
         self.xcresult = xcresult
-        self.diff = diff
         self.appStoreConnect = appStoreConnect
     }
 
@@ -98,19 +95,6 @@ public struct EvidenceConfig: Equatable {
                 enabled: try document.optionalBool("xcresult_enabled", default: false) ?? false,
                 keepFullBundle: try document.optionalBool("xcresult_keep_full_bundle", default: true) ?? true
             ),
-            diff: DiffConfig(
-                threshold: try document.optionalDouble("diff_threshold", default: 0.001, minimum: 0) ?? 0.001,
-                ignoreRegions: try DiffConfig.parseRegions(
-                    document.optionalStringArray("diff_ignore_regions", default: []) ?? []
-                ),
-                baselineDirectory: try document.optionalString(
-                    "diff_baseline_dir",
-                    default: "docs/baselines",
-                    allowEmpty: false
-                ) ?? "docs/baselines",
-                acceptAllowDirty: try document.optionalBool("diff_accept_allow_dirty", default: false) ?? false,
-                fuzzPercent: try document.optionalDouble("diff_fuzz_percent", default: 0, minimum: 0) ?? 0
-            ),
             appStoreConnect: try AppStoreConnectConfig.parse(document)
         )
     }
@@ -151,105 +135,6 @@ public struct AppStoreConnectConfig: Equatable {
             p8Path: try document.requiredString(prefix + "p8_path"),
             appID: try document.requiredString(prefix + "app_id")
         )
-    }
-}
-
-/// Configuration for `evidence diff` and `evidence accept-baseline`.
-///
-/// All keys are flat to match the project's line-based TOML parser (no nested
-/// tables). The conceptual `[diff]` table from the epic description maps to
-/// keys with a `diff_` prefix.
-///
-/// - `diff_threshold`: maximum fraction of pixels (0.0–1.0) that may differ
-///   between baseline and current capture before the run is considered a
-///   regression. Defaults to `0.001` (one tenth of one percent), which absorbs
-///   sub-pixel renderer noise without hiding real drift.
-/// - `diff_ignore_regions`: rectangles to mask (fill black) on both images
-///   before comparison. Format: `"X,Y,WxH"` per entry, in pixel units of the
-///   captured image. Use this for clocks, timestamps, or any deliberately
-///   non-deterministic UI element.
-/// - `diff_baseline_dir`: where committed baselines live in the consumer
-///   repo. Per-device paths are nested under this root.
-/// - `diff_accept_allow_dirty`: when `true`, `evidence accept-baseline` will
-///   overwrite baselines even if `git status --porcelain` reports uncommitted
-///   changes. Defaults to `false` so a stray local edit can't silently
-///   contaminate baselines.
-/// - `diff_fuzz_percent`: per-pixel color tolerance forwarded to
-///   `magick compare -fuzz`. Tiny values (0–5%) absorb antialiasing noise on
-///   font edges. Defaults to `0` (exact-match per pixel; the threshold
-///   absorbs the noise budget at the image level instead).
-public struct DiffConfig: Equatable {
-    public var threshold: Double
-    public var ignoreRegions: [DiffRegion]
-    public var baselineDirectory: String
-    public var acceptAllowDirty: Bool
-    public var fuzzPercent: Double
-
-    public init(
-        threshold: Double = 0.001,
-        ignoreRegions: [DiffRegion] = [],
-        baselineDirectory: String = "docs/baselines",
-        acceptAllowDirty: Bool = false,
-        fuzzPercent: Double = 0
-    ) {
-        self.threshold = threshold
-        self.ignoreRegions = ignoreRegions
-        self.baselineDirectory = baselineDirectory
-        self.acceptAllowDirty = acceptAllowDirty
-        self.fuzzPercent = fuzzPercent
-    }
-
-    /// Parse `["X,Y,WxH", ...]` into structured regions.
-    /// Surface a config error on the first malformed entry rather than
-    /// silently dropping it, since dropping an ignore region tends to flip a
-    /// run from green to red without an obvious cause.
-    public static func parseRegions(_ raw: [String]) throws -> [DiffRegion] {
-        try raw.map { entry in
-            guard let region = DiffRegion(string: entry) else {
-                throw CLIError.config("Invalid field 'diff_ignore_regions': '\(entry)' is not in 'X,Y,WxH' form (e.g. '0,0,200x100').")
-            }
-            return region
-        }
-    }
-}
-
-/// A rectangle (in image pixels) to mask out before computing a visual diff.
-public struct DiffRegion: Equatable {
-    public var x: Int
-    public var y: Int
-    public var width: Int
-    public var height: Int
-
-    public init(x: Int, y: Int, width: Int, height: Int) {
-        self.x = x
-        self.y = y
-        self.width = width
-        self.height = height
-    }
-
-    /// Parse the `"X,Y,WxH"` form. Returns `nil` for any malformed input so
-    /// the caller can build a precise error message.
-    public init?(string: String) {
-        let parts = string.split(separator: ",")
-        guard parts.count == 3,
-              let x = Int(parts[0].trimmingCharacters(in: .whitespaces)),
-              let y = Int(parts[1].trimmingCharacters(in: .whitespaces)) else {
-            return nil
-        }
-        let dim = parts[2].trimmingCharacters(in: .whitespaces).split(separator: "x")
-        guard dim.count == 2,
-              let width = Int(dim[0]),
-              let height = Int(dim[1]),
-              width >= 0, height >= 0 else {
-            return nil
-        }
-        self.init(x: x, y: y, width: width, height: height)
-    }
-
-    /// ImageMagick `-draw` argument for filling this region with black on a
-    /// copy of the input image.
-    public var magickDrawArgument: String {
-        "rectangle \(x),\(y) \(x + width),\(y + height)"
     }
 }
 

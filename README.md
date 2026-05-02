@@ -129,63 +129,6 @@ If `xcodebuild test` fails before the bundle is produced (for example, a build e
 
 > The conceptual `[xcresult]` table is exposed as flat keys (`xcresult_enabled`, `xcresult_keep_full_bundle`) because the project's TOML parser is intentionally lightweight. Behaviour is otherwise identical.
 
-### Visual regression
-
-`evidence diff` compares the latest screenshot run against a directory of committed baselines and fails CI when a screen drifts unexpectedly. It reuses the same `device_matrix` and `evidence_dir` your screenshot capture already emits — there is no separate snapshot-testing pipeline to maintain.
-
-The minimum `.evidence.toml`:
-
-```toml
-diff_threshold = 0.001                              # 0.1% of pixels may differ
-diff_baseline_dir = "docs/baselines"                # default
-diff_ignore_regions = ["0,0,1290x60", "0,2700,1290x96"]
-diff_fuzz_percent = 0                               # forwarded to `magick compare -fuzz`
-diff_accept_allow_dirty = false                     # accept-baseline refuses dirty trees
-```
-
-Workflow:
-
-```sh
-# 1. capture the screen as usual
-evidence capture-screenshots
-
-# 2. compare against committed baselines
-evidence diff --markdown docs/build-evidence/diff.md
-
-# 3. once you've eyeballed the report and the drift is intentional:
-evidence accept-baseline
-git add docs/baselines && git commit -m "Lock in new baselines"
-```
-
-Per-device baselines fall out of relative-path matching: a current capture at `docs/build-evidence/iPhone 16/home.png` compares against `docs/baselines/iPhone 16/home.png`. Devices missing entirely from the baseline tree surface as `missing baseline` for every scene under that subtree.
-
-Ignore regions are rectangles in pixel coordinates of the captured image, in the form `"X,Y,WxH"`. Both the baseline and the actual capture are masked black on those rectangles before comparison, so clocks, timestamps, and any deliberately non-deterministic UI element never trigger a false regression.
-
-Exit codes:
-
-| Code | Meaning |
-| ---: | --- |
-| 0 | every scene matched within `diff_threshold` |
-| 1 | one or more scenes exceeded the threshold (regression) |
-| 2 | one or more expected scenes had no baseline image |
-
-The `--markdown` flag (or piping stdout through your CI's PR-comment step) emits a table that GitHub renders inline:
-
-```markdown
-## Visual regression report
-
-**1 regression(s)** above the 0.100% threshold.
-
-| Scene | Status | Differing pixels | Diff |
-| --- | --- | ---: | --- |
-| `iPhone 16/home` | regression | 5000 | ![diff](https://raw.githubusercontent.com/example/app/main/docs/build-evidence/diff/iPhone 16/home.png) |
-| `iPhone 16/settings` | match | 0 | `docs/build-evidence/diff/iPhone 16/settings.png` |
-```
-
-The `diff-report.json` written next to the per-scene PNGs is the same data in machine-readable form. Use it to feed downstream dashboards or to gate non-PR workflows.
-
-`evidence accept-baseline` refuses to run when `git status --porcelain` reports uncommitted changes, since baselines are committed alongside the consumer's code and a stray local edit silently flowing into `git add` would be the worst-case bug. Pass `--force` (or set `diff_accept_allow_dirty = true`) when you actually want to accept on a dirty tree.
-
 Run the command that matches the workflow:
 
 ```sh
@@ -194,8 +137,6 @@ evidence capture-evidence --ticket APP-123
 evidence resize --input raw.png --target 6.9 --output app-store.png
 evidence record-preview --input capture.mov --output preview.mp4 --trim-start 0 --trim-end 30
 evidence render-marketing --scene scene.json --svg scene.svg --output scene.png
-evidence diff --baseline docs/baselines --markdown docs/build-evidence/diff.md
-evidence accept-baseline
 evidence upload-screenshots --dry-run
 ```
 
@@ -281,7 +222,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-The Action accepts a `subcommand` input matching the CLI verb (`capture-screenshots`, `capture-evidence`, `resize`, `render-marketing`, `record-preview`, `diff`, `upload-screenshots`) along with passthrough inputs for `config`, `ticket`, `baseline-dir`, `output-dir`, and `extra-args`. Set `comment-on-pr: 'true'` and pass `github-token` to have the Action post a PR comment listing every artifact produced by the run; the comment step is automatically skipped when no token is supplied or when the workflow does not run on a `pull_request` event.
+The Action accepts a `subcommand` input matching the CLI verb (`capture-screenshots`, `capture-evidence`, `resize`, `render-marketing`, `record-preview`, `upload-screenshots`) along with passthrough inputs for `config`, `ticket`, `output-dir`, and `extra-args`. Set `comment-on-pr: 'true'` and pass `github-token` to have the Action post a PR comment listing every artifact produced by the run; the comment step is automatically skipped when no token is supplied or when the workflow does not run on a `pull_request` event.
 
 ImageMagick and ffmpeg are installed and cached the first time the Action runs on a given runner, so warm runs reuse the formula tarballs. The `evidence` CLI itself is built once per release ref and cached under `~/runner.temp/evidence-build/.build`.
 

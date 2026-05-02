@@ -33,7 +33,6 @@ public struct ActionDefinitionValidator {
             "subcommand",
             "config",
             "ticket",
-            "baseline-dir",
             "output-dir",
             "extra-args",
             "comment-on-pr",

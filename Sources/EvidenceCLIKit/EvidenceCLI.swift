@@ -87,10 +87,6 @@ public struct EvidenceCLI {
             try recordPreview(commandArguments, config: config)
         case "capture-evidence":
             try captureEvidence(commandArguments, config: config)
-        case "diff":
-            try diff(commandArguments, config: config)
-        case "accept-baseline":
-            try acceptBaseline(commandArguments, config: config)
         case "upload-screenshots":
             try uploadScreenshots(commandArguments, config: config)
         default:
@@ -325,168 +321,6 @@ public struct EvidenceCLI {
         }
     }
 
-    private func diff(_ arguments: [String], config: EvidenceConfig) throws {
-        try requireTool(toolPaths.magick, versionArguments: ["--version"], installHint: "Install ImageMagick, for example with `brew install imagemagick`.")
-
-        // Resolve directories. CLI flags override `.evidence.toml`; all paths
-        // are anchored to the working directory so the tool composes cleanly
-        // with monorepos that run `evidence` from a sub-folder.
-        let baselinePath = optionValue("baseline", in: arguments) ?? config.diff.baselineDirectory
-        let currentPath = optionValue("current", in: arguments) ?? config.evidenceDirectory
-        // Default to `<evidence_dir>/diff` and `<output>/diff-report.json`.
-        // Build these as plain joined strings rather than via
-        // `URL(fileURLWithPath:)` because the latter resolves relative paths
-        // against the process CWD, which is wrong when `currentDirectory` is
-        // injected for tests or for monorepos that run `evidence` outside
-        // the package root.
-        let outputPath = optionValue("output", in: arguments) ?? joinPath(currentPath, "diff")
-        let reportPath = optionValue("report", in: arguments) ?? joinPath(outputPath, "diff-report.json")
-        let markdownPath = optionValue("markdown", in: arguments)
-
-        let baselineURL = url(forPath: baselinePath)
-        let currentURL = url(forPath: currentPath)
-        let outputURL = url(forPath: outputPath)
-        let reportURL = url(forPath: reportPath)
-
-        // Threshold flag override. Parses 0.0–1.0 by default; numbers >1 are
-        // treated as percent-style (`--threshold 5` => 0.05) which is how
-        // most CI configs express the value.
-        let threshold: Double
-        if let raw = optionValue("threshold", in: arguments) {
-            guard let value = Double(raw), value >= 0 else {
-                throw CLIError.usage("Invalid --threshold '\(raw)': expected a non-negative number.")
-            }
-            threshold = value > 1 ? value / 100 : value
-        } else {
-            threshold = config.diff.threshold
-        }
-
-        let visualDiff = VisualDiff(fileManager: fileManager, runner: runner, magickPath: toolPaths.magick)
-
-        // Surface a clean error when the consumer points us at a missing
-        // current-run directory — without this, the run silently produces an
-        // empty report.
-        guard fileManager.fileExists(atPath: currentURL.path) else {
-            throw CLIError.usage("Current capture directory '\(currentURL.path)' does not exist. Run `evidence capture-screenshots` first.")
-        }
-
-        let scenes = try visualDiff.compareDirectory(
-            currentDirectory: currentURL,
-            baselineDirectory: baselineURL,
-            diffOutputDirectory: outputURL,
-            threshold: threshold,
-            ignoreRegions: config.diff.ignoreRegions,
-            fuzzPercent: config.diff.fuzzPercent,
-            repoRoot: currentDirectory
-        )
-        let report = DiffReport(scenes: scenes, threshold: threshold)
-
-        try fileManager.createDirectory(
-            at: reportURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try DiffReportEncoder.encode(report).write(to: reportURL)
-        stdout("Wrote diff report to \(reportURL.path)")
-
-        let rawBaseURL = config.repositoryRawBaseURL ?? inferredRepositoryRawBaseURL()
-        let markdown = VisualDiff.renderMarkdown(report: report, repoRawBaseURL: rawBaseURL)
-        if let markdownPath {
-            let markdownURL = url(forPath: markdownPath)
-            try fileManager.createDirectory(
-                at: markdownURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try markdown.write(to: markdownURL, atomically: true, encoding: .utf8)
-            stdout("Wrote PR-comment markdown to \(markdownURL.path)")
-        } else {
-            stdout(markdown)
-        }
-
-        // Translate the report's verdict into the CI-contract exit codes.
-        // `.exit` carries the message so the caller still gets a one-line
-        // summary on stderr.
-        if report.hasRegression {
-            let count = report.scenes.filter { $0.status == .regression }.count
-            throw CLIError.exit(1, message: "\(count) scene(s) exceeded threshold \(threshold). See \(reportURL.path).")
-        }
-        if report.hasMissingBaseline {
-            let count = report.scenes.filter { $0.status == .baselineMissing }.count
-            throw CLIError.exit(2, message: "\(count) scene(s) missing baseline images. Run `evidence accept-baseline` to lock them in.")
-        }
-    }
-
-    private func acceptBaseline(_ arguments: [String], config: EvidenceConfig) throws {
-        let force = arguments.contains("--force")
-        let allowDirty = force || config.diff.acceptAllowDirty
-
-        let sourcePath = optionValue("source", in: arguments) ?? config.evidenceDirectory
-        let baselinePath = optionValue("baseline", in: arguments) ?? config.diff.baselineDirectory
-        let sourceURL = url(forPath: sourcePath)
-        let baselineURL = url(forPath: baselinePath)
-
-        guard fileManager.fileExists(atPath: sourceURL.path) else {
-            throw CLIError.usage("Source directory '\(sourceURL.path)' does not exist. Run `evidence capture-screenshots` first.")
-        }
-
-        // Refuse to overwrite baselines from a dirty working tree by default.
-        // Baselines are committed into the consumer repo, so a stray local
-        // edit silently flowing into `git add` is the worst-case bug.
-        if !allowDirty {
-            let status = try runner.run(toolPaths.git, ["status", "--porcelain"])
-            if status.exitCode == 0 {
-                let porcelain = status.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !porcelain.isEmpty {
-                    throw CLIError.commandFailed(
-                        "Refusing to accept baseline: working tree has uncommitted changes. " +
-                        "Commit or stash them first, pass --force, or set diff_accept_allow_dirty = true in .evidence.toml."
-                    )
-                }
-            }
-        }
-
-        try fileManager.createDirectory(at: baselineURL, withIntermediateDirectories: true)
-
-        // Mirror the latest run's PNGs into the baseline directory. We
-        // deliberately walk the source tree (rather than `cp -R`) so we can
-        // skip non-PNG artifacts like `diff/`, `diff-report.json`, and the
-        // xcresult bundle/markdown pair.
-        let enumerator = fileManager.enumerator(at: sourceURL, includingPropertiesForKeys: [.isRegularFileKey])
-        var copied = 0
-        // Resolve symlinks once so a `/var -> /private/var` redirection on
-        // macOS doesn't smear the prefix and produce bogus relative paths.
-        let resolvedSourcePrefix = sourceURL.resolvingSymlinksInPath().path + "/"
-        if let enumerator {
-            for case let url as URL in enumerator where url.pathExtension.lowercased() == "png" {
-                let resolvedPath = url.resolvingSymlinksInPath().path
-                let relative: String
-                if resolvedPath.hasPrefix(resolvedSourcePrefix) {
-                    relative = String(resolvedPath.dropFirst(resolvedSourcePrefix.count))
-                } else if url.path.hasPrefix(sourceURL.path + "/") {
-                    relative = String(url.path.dropFirst(sourceURL.path.count + 1))
-                } else {
-                    relative = url.lastPathComponent
-                }
-                // Skip our own diff outputs so accepting a baseline never
-                // pulls last-run's diff PNGs into the baseline tree.
-                if relative.hasPrefix("diff/") {
-                    continue
-                }
-                let destinationURL = baselineURL.appendingPathComponent(relative)
-                try fileManager.createDirectory(
-                    at: destinationURL.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-                if fileManager.fileExists(atPath: destinationURL.path) {
-                    try fileManager.removeItem(at: destinationURL)
-                }
-                try fileManager.copyItem(at: url, to: destinationURL)
-                copied += 1
-            }
-        }
-
-        stdout("Accepted \(copied) baseline image(s) at \(baselineURL.path).")
-    }
-
     private func uploadScreenshots(_ arguments: [String], config: EvidenceConfig) throws {
         try AppStoreScreenshotUploader(
             fileManager: fileManager,
@@ -508,21 +342,6 @@ public struct EvidenceCLI {
             return URL(fileURLWithPath: path)
         }
         return currentDirectory.appendingPathComponent(path)
-    }
-
-    /// Join two path-like strings while preserving relative-vs-absolute
-    /// semantics. `URL(fileURLWithPath:)` would silently rebase a relative
-    /// `"docs/build-evidence/diff"` against the process CWD, which breaks
-    /// tests that inject `currentDirectory` and breaks monorepos that run
-    /// `evidence` from a sub-folder.
-    private func joinPath(_ left: String, _ right: String) -> String {
-        if right.hasPrefix("/") {
-            return right
-        }
-        if left.hasSuffix("/") {
-            return left + right
-        }
-        return left + "/" + right
     }
 
     private func inferredRepositoryRawBaseURL() -> String? {
