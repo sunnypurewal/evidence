@@ -1,6 +1,14 @@
 name: swift-test
 
 on:
+  pull_request:
+    paths:
+      - 'Sources/**'
+      - 'Tests/**'
+      - 'Package.swift'
+      - 'Package.resolved'
+      - '.github/workflows/swift-test.yml'
+  merge_group:
   push:
     branches:
       - main
