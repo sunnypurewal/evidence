@@ -66,7 +66,7 @@ final class ActionDefinitionTests: XCTestCase {
         XCTAssertThrowsError(try ActionDefinitionValidator().validate(source)) { error in
             XCTAssertEqual(
                 error as? CLIError,
-                .config("action.yml is missing the required input 'config'.")
+                .config("action.yml is missing the required input 'platform'.")
             )
         }
     }

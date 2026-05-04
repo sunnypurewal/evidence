@@ -31,6 +31,7 @@ public struct ActionDefinitionValidator {
     public static let defaultRequirements = Requirements(
         requiredInputNames: [
             "subcommand",
+            "platform",
             "config",
             "ticket",
             "output-dir",

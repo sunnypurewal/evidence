@@ -41,9 +41,13 @@ final class ExampleWorkflowsTests: XCTestCase {
 
         for file in files {
             let workflow = try String(contentsOf: file, encoding: .utf8)
+            // Web platform workflows run on ubuntu-latest; iOS workflows require a macOS runner.
+            let isWebWorkflow = workflow.contains("platform: web")
+            let runsOnMacOS = workflow.contains("runs-on: macos-14") || workflow.contains("runs-on: macos-15")
+            let runsOnUbuntu = workflow.contains("runs-on: ubuntu-")
             XCTAssertTrue(
-                workflow.contains("runs-on: macos-14") || workflow.contains("runs-on: macos-15"),
-                "Example workflow \(file.lastPathComponent) must run on a supported macOS runner."
+                runsOnMacOS || (isWebWorkflow && runsOnUbuntu),
+                "Example workflow \(file.lastPathComponent) must run on a supported macOS runner (iOS) or ubuntu (web platform)."
             )
         }
     }
