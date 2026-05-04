@@ -919,7 +919,7 @@ final class EvidenceCLIKitTests: XCTestCase {
         XCTAssertTrue(joined.contains("![desktop-1440]"), "expected desktop-1440 image tag: \(joined)")
         XCTAssertTrue(joined.contains("![mobile-390]"), "expected mobile-390 image tag: \(joined)")
         XCTAssertTrue(joined.contains("Captured by evidence"), "expected footer line: \(joined)")
-        XCTAssertTrue(joined.contains("raw.githubusercontent.com/example/app/main"), "expected raw github URL: \(joined)")
+        XCTAssertTrue(joined.contains("raw.githubusercontent.com/example/app/"), "expected raw github URL: \(joined)")
     }
 
     func testCaptureWebCommentBodyContainsCorrectStructure() throws {
@@ -946,8 +946,8 @@ final class EvidenceCLIKitTests: XCTestCase {
         XCTAssertTrue(commentBody.contains("### desktop-1440"))
         XCTAssertTrue(commentBody.contains("### mobile-390"))
 
-        // Image markdown uses raw GitHub URL
-        XCTAssertTrue(commentBody.contains("raw.githubusercontent.com/example/app/main"))
+        // Image markdown uses raw GitHub URL (branch segment may be substituted via GITHUB_HEAD_REF)
+        XCTAssertTrue(commentBody.contains("raw.githubusercontent.com/example/app/"))
         XCTAssertTrue(commentBody.contains("desktop-1440/index.png"))
         XCTAssertTrue(commentBody.contains("mobile-390/index.png"))
 
