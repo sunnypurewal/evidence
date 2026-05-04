@@ -1,4 +1,6 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#endif
 import Foundation
 
 public protocol HTTPClient {
@@ -218,7 +220,7 @@ public struct ScreenshotUploadPlanner {
                 slot: parsed.slot,
                 width: dimensions.width,
                 height: dimensions.height,
-                sourceFileChecksum: Insecure.MD5.hash(data: data).map { String(format: "%02x", $0) }.joined(),
+                sourceFileChecksum: Self.md5Hex(data),
                 fileSize: data.count
             ))
         }
@@ -246,6 +248,14 @@ public struct ScreenshotUploadPlanner {
         let stem = URL(fileURLWithPath: fileName).deletingPathExtension().lastPathComponent
         let prefix = stem.prefix { $0.isNumber }
         return Int(prefix) ?? 1
+    }
+
+    static func md5Hex(_ data: Data) -> String {
+#if canImport(CryptoKit)
+        return Insecure.MD5.hash(data: data).map { String(format: "%02x", $0) }.joined()
+#else
+        return ""
+#endif
     }
 }
 
@@ -593,6 +603,7 @@ public struct AppStoreConnectJWT {
     }
 
     public func token() throws -> String {
+#if canImport(CryptoKit)
         let keyURL = config.p8Path.hasPrefix("/")
             ? URL(fileURLWithPath: config.p8Path)
             : currentDirectory.appendingPathComponent(config.p8Path)
@@ -614,6 +625,9 @@ public struct AppStoreConnectJWT {
         let signingInput = "\(header).\(payload)"
         let signature = try privateKey.signature(for: Data(signingInput.utf8)).rawRepresentation.base64URLEncodedString()
         return "\(signingInput).\(signature)"
+#else
+        throw CLIError.commandFailed("upload-screenshots requires a macOS runner (CryptoKit is not available on Linux).")
+#endif
     }
 
     private func jsonBase64URL(_ object: [String: Any]) throws -> String {
