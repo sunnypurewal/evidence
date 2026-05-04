@@ -25,17 +25,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache Swift Package Manager artifacts
-        uses: actions/cache@v4
-        with:
-          path: |
-            .build
-            ~/Library/Caches/org.swift.swiftpm
-            ~/Library/org.swift.swiftpm
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved', 'Package.swift') }}
-          restore-keys: |
-            ${{ runner.os }}-spm-
-
       - name: Show Swift toolchain
         run: swift --version
 
