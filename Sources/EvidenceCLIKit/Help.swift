@@ -146,7 +146,7 @@ public enum Help {
     """
 
     public static let captureWeb = """
-    evidence capture-web
+    evidence capture-web [--comment-on-pr true] [--github-token <token>]
 
     Captures full-page web screenshots at each configured viewport using Playwright.
 
@@ -165,11 +165,19 @@ public enum Help {
 
     Output: <evidence_dir>/<viewport-name>/<page-slug>.png
 
+    PR comment flags:
+      --comment-on-pr true   Post a markdown comment with inline viewport screenshots
+                             to the open GitHub PR. Requires GITHUB_TOKEN env var or
+                             --github-token. When omitted, the comment body is printed
+                             to stdout (dry-run mode).
+      --github-token <token> GitHub token to use instead of GITHUB_TOKEN env var.
+
     Requires:
       node (with playwright installed: npm install playwright)
 
     Example:
       evidence capture-web
+      evidence capture-web --comment-on-pr true
     """
 
     public static func text(for command: String) throws -> String {

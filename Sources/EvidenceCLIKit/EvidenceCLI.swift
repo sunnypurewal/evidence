@@ -90,7 +90,7 @@ public struct EvidenceCLI {
         case "upload-screenshots":
             try uploadScreenshots(commandArguments, config: config)
         case "capture-web":
-            try captureWeb(config: config)
+            try captureWeb(commandArguments, config: config)
         default:
             throw CLIError.usage("Unknown command '\(first)'. Run `evidence --help`.")
         }
@@ -335,7 +335,14 @@ public struct EvidenceCLI {
     /// where `<viewport-name>` is the viewport preset name (e.g. `desktop-1440`)
     /// or the custom `WxH` string, and `<page-slug>` is derived from the URL path
     /// (defaulting to `index` for the root).
-    private func captureWeb(config: EvidenceConfig) throws {
+    ///
+    /// Optional flags:
+    ///   `--comment-on-pr true`   Post the comment body as a GitHub PR comment.
+    ///   `--github-token <token>` GitHub token to use (overrides `GITHUB_TOKEN` env var).
+    ///
+    /// When `--comment-on-pr` is omitted or false, the comment body is printed to
+    /// stdout (dry-run mode).
+    private func captureWeb(_ arguments: [String], config: EvidenceConfig) throws {
         guard config.platform == .web else {
             throw CLIError.usage("capture-web requires platform = \"web\" in .evidence.toml.")
         }
@@ -355,6 +362,9 @@ public struct EvidenceCLI {
 
         let pageSlug = Self.pageSlug(from: web.url)
         let evidenceDir = currentDirectory.appendingPathComponent(config.evidenceDirectory, isDirectory: true)
+
+        // Collect output PNG paths per viewport so we can build the PR comment.
+        var viewportOutputPaths: [(viewport: String, path: String)] = []
 
         for viewport in web.viewports {
             let viewportSpec = Self.resolveViewport(viewport)
@@ -383,7 +393,151 @@ public struct EvidenceCLI {
             }
 
             stdout("Captured \(viewport) screenshot at \(outputPath)")
+            viewportOutputPaths.append((viewport: viewport, path: outputPath))
         }
+
+        // Build and optionally post the PR comment.
+        let commentOnPR = optionValue("comment-on-pr", in: arguments) == "true"
+        let tokenFlag = optionValue("github-token", in: arguments)
+
+        // Verify all output PNGs exist on disk (fast-fail before building comment).
+        for entry in viewportOutputPaths {
+            guard fileManager.fileExists(atPath: entry.path) else {
+                throw CLIError.commandFailed("Expected output PNG not found on disk: \(entry.path)")
+            }
+        }
+
+        let commentBody = buildWebPRComment(
+            viewportOutputPaths: viewportOutputPaths,
+            config: config
+        )
+
+        if commentOnPR {
+            try postWebPRComment(commentBody, tokenFlag: tokenFlag)
+        } else {
+            stdout(commentBody)
+        }
+    }
+
+    /// Builds the markdown comment body for a `capture-web` PR comment.
+    ///
+    /// The URL for each viewport image uses the PR branch ref when
+    /// `GITHUB_HEAD_REF` is set in the environment, replacing the inferred
+    /// `/main` suffix so the raw URL resolves on the PR branch rather than
+    /// `main`.
+    private func buildWebPRComment(
+        viewportOutputPaths: [(viewport: String, path: String)],
+        config: EvidenceConfig
+    ) -> String {
+        let date = ISO8601DateFormatter().string(from: Date())
+            .components(separatedBy: "T").first ?? ""
+
+        var lines: [String] = ["## Evidence — \(date) UTC"]
+
+        for entry in viewportOutputPaths {
+            let outputURL = URL(fileURLWithPath: entry.path)
+            var imageURL: String? = markdownURL(for: outputURL, config: config)
+
+            // Replace the inferred `/main` branch suffix with the PR head ref
+            // so the raw URL resolves on the PR branch rather than main.
+            if let headRef = ProcessInfo.processInfo.environment["GITHUB_HEAD_REF"],
+               !headRef.isEmpty,
+               let url = imageURL {
+                // The inferred URL ends with `/main/<relative-path>`. Replace
+                // the `/main/` segment with `/<headRef>/`.
+                imageURL = url.replacingOccurrences(of: "/main/", with: "/\(headRef)/")
+            }
+
+            lines.append("")
+            lines.append("### \(entry.viewport)")
+            if let url = imageURL {
+                lines.append("![\(entry.viewport)](\(url))")
+            } else {
+                lines.append("Screenshot: `\(entry.path)`")
+            }
+        }
+
+        lines.append("")
+        // TODO: extract Playwright version from node script output (version not currently surfaced by capture-web.js)
+        lines.append("Captured by evidence · Playwright 1.x · Chromium headless")
+
+        return lines.joined(separator: "\n")
+    }
+
+    /// Posts `body` as a GitHub PR comment via the REST API.
+    ///
+    /// Reads `GITHUB_REPOSITORY` and `GITHUB_REF` from the process environment
+    /// to determine the repo and PR number.  `GITHUB_TOKEN` is used unless
+    /// `--github-token` was passed on the CLI.
+    private func postWebPRComment(_ body: String, tokenFlag: String?) throws {
+        let env = ProcessInfo.processInfo.environment
+
+        let token: String
+        if let t = tokenFlag, !t.isEmpty {
+            token = t
+        } else if let t = env["GITHUB_TOKEN"], !t.isEmpty {
+            token = t
+        } else {
+            throw CLIError.commandFailed(
+                "--comment-on-pr true requires a GitHub token. Pass --github-token <token> or set the GITHUB_TOKEN environment variable."
+            )
+        }
+
+        guard let repo = env["GITHUB_REPOSITORY"], !repo.isEmpty else {
+            throw CLIError.commandFailed(
+                "GITHUB_REPOSITORY environment variable is not set. This is expected on GitHub Actions pull_request events."
+            )
+        }
+
+        // Extract PR number from GITHUB_REF (format: refs/pull/N/merge).
+        guard let githubRef = env["GITHUB_REF"],
+              let prNumber = Self.extractPRNumber(from: githubRef) else {
+            throw CLIError.commandFailed(
+                "Could not determine PR number from GITHUB_REF '\(env["GITHUB_REF"] ?? "(unset)")'. Expected format: refs/pull/N/merge."
+            )
+        }
+
+        let apiURL = "https://api.github.com/repos/\(repo)/issues/\(prNumber)/comments"
+        let payload = try JSONSerialization.data(
+            withJSONObject: ["body": body],
+            options: []
+        )
+        let payloadString = String(data: payload, encoding: .utf8) ?? "{}"
+
+        let result = try runner.run(
+            "/usr/bin/curl",
+            [
+                "-s",
+                "-X", "POST",
+                "-H", "Authorization: Bearer \(token)",
+                "-H", "Content-Type: application/json",
+                apiURL,
+                "-d", payloadString
+            ]
+        )
+
+        guard result.exitCode == 0 else {
+            throw CLIError.commandFailed("Failed to post PR comment: \(result.stderr)")
+        }
+
+        stdout("Posted PR comment to \(apiURL)")
+    }
+
+    /// Extracts the PR number from a GitHub Actions `GITHUB_REF` value.
+    ///
+    /// - `"refs/pull/42/merge"` → `"42"`
+    /// - Anything else → `nil`
+    public static func extractPRNumber(from githubRef: String) -> String? {
+        // refs/pull/<number>/merge
+        let components = githubRef.split(separator: "/", omittingEmptySubsequences: false)
+        guard components.count >= 4,
+              components[0] == "refs",
+              components[1] == "pull",
+              components[3] == "merge" else {
+            return nil
+        }
+        let number = String(components[2])
+        return number.isEmpty ? nil : number
     }
 
     /// Resolves a named viewport preset to a `WxH` spec string, or passes
