@@ -89,6 +89,8 @@ public struct EvidenceCLI {
             try captureEvidence(commandArguments, config: config)
         case "upload-screenshots":
             try uploadScreenshots(commandArguments, config: config)
+        case "capture-web":
+            try captureWeb(config: config)
         default:
             throw CLIError.usage("Unknown command '\(first)'. Run `evidence --help`.")
         }
@@ -321,6 +323,108 @@ public struct EvidenceCLI {
         }
     }
 
+    /// Captures web screenshots for each configured viewport using Playwright.
+    ///
+    /// Requires `platform = "web"` in `.evidence.toml` and the `web_url` and
+    /// `web_viewports` keys. Calls the bundled `capture-web.js` Node script via
+    /// the `node` binary in `toolPaths`.
+    ///
+    /// Output layout:
+    ///   `<evidence_dir>/<viewport-name>/<page-slug>.png`
+    ///
+    /// where `<viewport-name>` is the viewport preset name (e.g. `desktop-1440`)
+    /// or the custom `WxH` string, and `<page-slug>` is derived from the URL path
+    /// (defaulting to `index` for the root).
+    private func captureWeb(config: EvidenceConfig) throws {
+        guard config.platform == .web else {
+            throw CLIError.usage("capture-web requires platform = \"web\" in .evidence.toml.")
+        }
+        guard let web = config.webConfig else {
+            throw CLIError.config("Missing web configuration. Set platform = \"web\" and provide web_url and web_viewports in .evidence.toml.")
+        }
+
+        // Locate the bundled capture-web.js script via the module bundle.
+        guard let scriptURL = Bundle.module.url(forResource: "capture-web", withExtension: "js") else {
+            throw CLIError.commandFailed("Bundled capture-web.js script not found. Reinstall the evidence tool.")
+        }
+
+        // Ensure node is available.
+        guard fileManager.isExecutableFile(atPath: toolPaths.node) else {
+            throw CLIError.missingTool("node", installHint: "Install Node.js (https://nodejs.org) and ensure `node` is on your PATH.")
+        }
+
+        let pageSlug = Self.pageSlug(from: web.url)
+        let evidenceDir = currentDirectory.appendingPathComponent(config.evidenceDirectory, isDirectory: true)
+
+        for viewport in web.viewports {
+            let viewportSpec = Self.resolveViewport(viewport)
+            let outputDir = evidenceDir.appendingPathComponent(viewport, isDirectory: true)
+            try fileManager.createDirectory(at: outputDir, withIntermediateDirectories: true)
+            let outputPath = outputDir.appendingPathComponent("\(pageSlug).png").path
+
+            let result = try runner.run(
+                toolPaths.node,
+                [
+                    scriptURL.path,
+                    web.url,
+                    viewportSpec,
+                    web.fullPage ? "true" : "false",
+                    web.waitUntil,
+                    outputPath
+                ]
+            )
+
+            guard result.exitCode == 0 else {
+                throw CLIError.commandFailed("Web screenshot capture failed for viewport '\(viewport)': \(result.stderr)")
+            }
+
+            guard fileManager.fileExists(atPath: outputPath) else {
+                throw CLIError.commandFailed("Web screenshot capture produced no output for viewport '\(viewport)'.")
+            }
+
+            stdout("Captured \(viewport) screenshot at \(outputPath)")
+        }
+    }
+
+    /// Resolves a named viewport preset to a `WxH` spec string, or passes
+    /// through custom `WxH` strings unchanged.
+    ///
+    /// - `desktop-1440` → `1440x900`
+    /// - `mobile-390`   → `390x844`
+    /// - `WxH`          → `WxH` (passed through)
+    public static func resolveViewport(_ viewport: String) -> String {
+        switch viewport {
+        case "desktop-1440":
+            return "1440x900"
+        case "mobile-390":
+            return "390x844"
+        default:
+            return viewport
+        }
+    }
+
+    /// Derives a filesystem-safe page slug from a URL path component.
+    ///
+    /// - Root paths (`/` or empty) → `"index"`
+    /// - `/about/team` → `"about-team"`
+    /// - `/products/widget-pro` → `"products-widget-pro"`
+    public static func pageSlug(from urlString: String) -> String {
+        guard let url = URL(string: urlString), url.scheme != nil else {
+            return "index"
+        }
+        let path = url.path
+        if path.isEmpty || path == "/" {
+            return "index"
+        }
+        // Strip leading/trailing slashes, replace path separators with dashes,
+        // and lowercase for consistency.
+        let slug = path
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .replacingOccurrences(of: "/", with: "-")
+            .lowercased()
+        return slug.isEmpty ? "index" : slug
+    }
+
     private func uploadScreenshots(_ arguments: [String], config: EvidenceConfig) throws {
         try AppStoreScreenshotUploader(
             fileManager: fileManager,
@@ -402,16 +506,21 @@ public struct ToolPaths: Equatable {
     public var magick: String
     public var ffmpeg: String
     public var git: String
+    /// Path to the `node` binary. Used by `capture-web` to invoke the bundled
+    /// Playwright script.
+    public var node: String
 
     public init(
         xcrun: String = "/usr/bin/xcrun",
         magick: String = "/opt/homebrew/bin/magick",
         ffmpeg: String = "/opt/homebrew/bin/ffmpeg",
-        git: String = "/usr/bin/git"
+        git: String = "/usr/bin/git",
+        node: String = "/usr/local/bin/node"
     ) {
         self.xcrun = xcrun
         self.magick = magick
         self.ffmpeg = ffmpeg
         self.git = git
+        self.node = node
     }
 }

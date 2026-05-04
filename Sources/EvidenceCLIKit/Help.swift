@@ -14,6 +14,7 @@ public enum Help {
       record-preview        Encode an App Preview-compatible video.
       capture-evidence      Capture a one-shot build evidence screenshot.
       upload-screenshots    Upload screenshots to App Store Connect.
+      capture-web           Capture full-page Playwright screenshots at configured viewport sizes.
 
     Configuration:
       Commands read .evidence.toml from the current directory. Required fields:
@@ -144,6 +145,33 @@ public enum Help {
       evidence upload-screenshots --locale en-US
     """
 
+    public static let captureWeb = """
+    evidence capture-web
+
+    Captures full-page web screenshots at each configured viewport using Playwright.
+
+    Requires platform = "web" in .evidence.toml plus:
+      web_url          = "https://example.com"
+      web_viewports    = ["desktop-1440", "mobile-390"]
+
+    Named viewport presets:
+      desktop-1440  -> 1440x900
+      mobile-390    -> 390x844
+      Custom WxH strings (e.g. "1280x800") are also accepted.
+
+    Optional:
+      web_full_page   = true           (default true)
+      web_wait_until  = "networkidle"  (default networkidle)
+
+    Output: <evidence_dir>/<viewport-name>/<page-slug>.png
+
+    Requires:
+      node (with playwright installed: npm install playwright)
+
+    Example:
+      evidence capture-web
+    """
+
     public static func text(for command: String) throws -> String {
         switch command {
         case "capture-screenshots":
@@ -158,6 +186,8 @@ public enum Help {
             captureEvidence
         case "upload-screenshots":
             uploadScreenshots
+        case "capture-web":
+            captureWeb
         default:
             throw CLIError.usage("Unknown command '\(command)'. Run `evidence --help`.")
         }
