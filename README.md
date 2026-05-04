@@ -205,6 +205,8 @@ jobs:
 
 `evidence` ships a reusable GitHub Action so any iOS app repo can run the CLI on a hosted macOS runner without bootstrapping Xcode tooling, ImageMagick, or ffmpeg by hand. Pin to a major version for stability, or to a SHA for full reproducibility.
 
+**iOS — capture build evidence on every PR:**
+
 ```yaml
 jobs:
   capture-evidence:
@@ -222,16 +224,40 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-The Action accepts a `subcommand` input matching the CLI verb (`capture-screenshots`, `capture-evidence`, `resize`, `render-marketing`, `record-preview`, `upload-screenshots`) along with passthrough inputs for `config`, `ticket`, `output-dir`, and `extra-args`. Set `comment-on-pr: 'true'` and pass `github-token` to have the Action post a PR comment listing every artifact produced by the run; the comment step is automatically skipped when no token is supplied or when the workflow does not run on a `pull_request` event.
+**Web — capture Playwright screenshots on every PR:**
 
-ImageMagick and ffmpeg are installed and cached the first time the Action runs on a given runner, so warm runs reuse the formula tarballs. The `evidence` CLI itself is built once per release ref and cached under `~/runner.temp/evidence-build/.build`.
+```yaml
+jobs:
+  capture-web:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start local HTTP server
+        run: python3 -m http.server 8765 &
+      - uses: RiddimSoftware/evidence@v0
+        with:
+          subcommand: capture-web
+          platform: web
+          comment-on-pr: 'true'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+```
 
-Two ready-to-copy workflows live under [`Examples/workflows/`](Examples/workflows/):
+The Action accepts a `subcommand` input matching the CLI verb (`capture-screenshots`, `capture-evidence`, `capture-web`, `resize`, `render-marketing`, `record-preview`, `upload-screenshots`) along with passthrough inputs for `config`, `ticket`, `output-dir`, and `extra-args`. Set `comment-on-pr: 'true'` and pass `github-token` to have the Action post a PR comment listing every artifact produced by the run; the comment step is automatically skipped when no token is supplied or when the workflow does not run on a `pull_request` event.
+
+The `platform` input selects the capture mode: `ios` (default) for iOS simulator captures on macOS runners, or `web` for Playwright Chromium screenshots on any runner (including `ubuntu-latest`). When `platform: web`, Node.js 20 and the Playwright Chromium browser are installed and cached automatically.
+
+ImageMagick and ffmpeg are installed and cached the first time the Action runs on an iOS runner, so warm runs reuse the formula tarballs. The `evidence` CLI itself is built once per release ref and cached under `~/runner.temp/evidence-build/.build`.
+
+Three ready-to-copy workflows live under [`Examples/workflows/`](Examples/workflows/):
 
 - `capture-evidence-on-pr.yml` — captures a screenshot per pull request, posts it as a PR comment, and uploads it as an artifact.
 - `capture-screenshots-on-tag.yml` — captures the full App Store screenshot matrix when you push a release tag.
+- `capture-web-on-pr.yml` — starts a local HTTP server and captures Playwright web screenshots on every PR, posting a comment with the results.
 
-Marketplace listing: <https://github.com/marketplace/actions/evidence>. The Action only supports `macos-14` and newer hosted runners; self-hosted macOS runners and non-macOS runners are out of scope for v1.
+Marketplace listing: <https://github.com/marketplace/actions/evidence>. The iOS platform requires `macos-14` or newer; the web platform runs on any runner with Node.js available (including `ubuntu-latest`).
 
 ## Documentation
 
