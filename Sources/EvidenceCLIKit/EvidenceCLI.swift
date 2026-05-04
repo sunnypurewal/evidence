@@ -87,12 +87,10 @@ public struct EvidenceCLI {
             try recordPreview(commandArguments, config: config)
         case "capture-evidence":
             try captureEvidence(commandArguments, config: config)
-        case "diff":
-            try diff(commandArguments, config: config)
-        case "accept-baseline":
-            try acceptBaseline(commandArguments, config: config)
         case "upload-screenshots":
             try uploadScreenshots(commandArguments, config: config)
+        case "capture-web":
+            try captureWeb(commandArguments, config: config)
         default:
             throw CLIError.usage("Unknown command '\(first)'. Run `evidence --help`.")
         }
@@ -325,166 +323,260 @@ public struct EvidenceCLI {
         }
     }
 
-    private func diff(_ arguments: [String], config: EvidenceConfig) throws {
-        try requireTool(toolPaths.magick, versionArguments: ["--version"], installHint: "Install ImageMagick, for example with `brew install imagemagick`.")
-
-        // Resolve directories. CLI flags override `.evidence.toml`; all paths
-        // are anchored to the working directory so the tool composes cleanly
-        // with monorepos that run `evidence` from a sub-folder.
-        let baselinePath = optionValue("baseline", in: arguments) ?? config.diff.baselineDirectory
-        let currentPath = optionValue("current", in: arguments) ?? config.evidenceDirectory
-        // Default to `<evidence_dir>/diff` and `<output>/diff-report.json`.
-        // Build these as plain joined strings rather than via
-        // `URL(fileURLWithPath:)` because the latter resolves relative paths
-        // against the process CWD, which is wrong when `currentDirectory` is
-        // injected for tests or for monorepos that run `evidence` outside
-        // the package root.
-        let outputPath = optionValue("output", in: arguments) ?? joinPath(currentPath, "diff")
-        let reportPath = optionValue("report", in: arguments) ?? joinPath(outputPath, "diff-report.json")
-        let markdownPath = optionValue("markdown", in: arguments)
-
-        let baselineURL = url(forPath: baselinePath)
-        let currentURL = url(forPath: currentPath)
-        let outputURL = url(forPath: outputPath)
-        let reportURL = url(forPath: reportPath)
-
-        // Threshold flag override. Parses 0.0–1.0 by default; numbers >1 are
-        // treated as percent-style (`--threshold 5` => 0.05) which is how
-        // most CI configs express the value.
-        let threshold: Double
-        if let raw = optionValue("threshold", in: arguments) {
-            guard let value = Double(raw), value >= 0 else {
-                throw CLIError.usage("Invalid --threshold '\(raw)': expected a non-negative number.")
-            }
-            threshold = value > 1 ? value / 100 : value
-        } else {
-            threshold = config.diff.threshold
+    /// Captures web screenshots for each configured viewport using Playwright.
+    ///
+    /// Requires `platform = "web"` in `.evidence.toml` and the `web_url` and
+    /// `web_viewports` keys. Calls the bundled `capture-web.js` Node script via
+    /// the `node` binary in `toolPaths`.
+    ///
+    /// Output layout:
+    ///   `<evidence_dir>/<viewport-name>/<page-slug>.png`
+    ///
+    /// where `<viewport-name>` is the viewport preset name (e.g. `desktop-1440`)
+    /// or the custom `WxH` string, and `<page-slug>` is derived from the URL path
+    /// (defaulting to `index` for the root).
+    ///
+    /// Optional flags:
+    ///   `--comment-on-pr true`   Post the comment body as a GitHub PR comment.
+    ///   `--github-token <token>` GitHub token to use (overrides `GITHUB_TOKEN` env var).
+    ///
+    /// When `--comment-on-pr` is omitted or false, the comment body is printed to
+    /// stdout (dry-run mode).
+    private func captureWeb(_ arguments: [String], config: EvidenceConfig) throws {
+        guard config.platform == .web else {
+            throw CLIError.usage("capture-web requires platform = \"web\" in .evidence.toml.")
+        }
+        guard let web = config.webConfig else {
+            throw CLIError.config("Missing web configuration. Set platform = \"web\" and provide web_url and web_viewports in .evidence.toml.")
         }
 
-        let visualDiff = VisualDiff(fileManager: fileManager, runner: runner, magickPath: toolPaths.magick)
-
-        // Surface a clean error when the consumer points us at a missing
-        // current-run directory — without this, the run silently produces an
-        // empty report.
-        guard fileManager.fileExists(atPath: currentURL.path) else {
-            throw CLIError.usage("Current capture directory '\(currentURL.path)' does not exist. Run `evidence capture-screenshots` first.")
+        // Locate the bundled capture-web.js script via the module bundle.
+        guard let scriptURL = Bundle.module.url(forResource: "capture-web", withExtension: "js") else {
+            throw CLIError.commandFailed("Bundled capture-web.js script not found. Reinstall the evidence tool.")
         }
 
-        let scenes = try visualDiff.compareDirectory(
-            currentDirectory: currentURL,
-            baselineDirectory: baselineURL,
-            diffOutputDirectory: outputURL,
-            threshold: threshold,
-            ignoreRegions: config.diff.ignoreRegions,
-            fuzzPercent: config.diff.fuzzPercent,
-            repoRoot: currentDirectory
-        )
-        let report = DiffReport(scenes: scenes, threshold: threshold)
+        // Ensure node is available.
+        guard fileManager.isExecutableFile(atPath: toolPaths.node) else {
+            throw CLIError.missingTool("node", installHint: "Install Node.js (https://nodejs.org) and ensure `node` is on your PATH.")
+        }
 
-        try fileManager.createDirectory(
-            at: reportURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try DiffReportEncoder.encode(report).write(to: reportURL)
-        stdout("Wrote diff report to \(reportURL.path)")
+        let pageSlug = Self.pageSlug(from: web.url)
+        let evidenceDir = currentDirectory.appendingPathComponent(config.evidenceDirectory, isDirectory: true)
 
-        let rawBaseURL = config.repositoryRawBaseURL ?? inferredRepositoryRawBaseURL()
-        let markdown = VisualDiff.renderMarkdown(report: report, repoRawBaseURL: rawBaseURL)
-        if let markdownPath {
-            let markdownURL = url(forPath: markdownPath)
-            try fileManager.createDirectory(
-                at: markdownURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
+        // Collect output PNG paths per viewport so we can build the PR comment.
+        var viewportOutputPaths: [(viewport: String, path: String)] = []
+
+        for viewport in web.viewports {
+            let viewportSpec = Self.resolveViewport(viewport)
+            let outputDir = evidenceDir.appendingPathComponent(viewport, isDirectory: true)
+            try fileManager.createDirectory(at: outputDir, withIntermediateDirectories: true)
+            let outputPath = outputDir.appendingPathComponent("\(pageSlug).png").path
+
+            let result = try runner.run(
+                toolPaths.node,
+                [
+                    scriptURL.path,
+                    web.url,
+                    viewportSpec,
+                    web.fullPage ? "true" : "false",
+                    web.waitUntil,
+                    outputPath
+                ]
             )
-            try markdown.write(to: markdownURL, atomically: true, encoding: .utf8)
-            stdout("Wrote PR-comment markdown to \(markdownURL.path)")
-        } else {
-            stdout(markdown)
+
+            guard result.exitCode == 0 else {
+                throw CLIError.commandFailed("Web screenshot capture failed for viewport '\(viewport)': \(result.stderr)")
+            }
+
+            guard fileManager.fileExists(atPath: outputPath) else {
+                throw CLIError.commandFailed("Web screenshot capture produced no output for viewport '\(viewport)'.")
+            }
+
+            stdout("Captured \(viewport) screenshot at \(outputPath)")
+            viewportOutputPaths.append((viewport: viewport, path: outputPath))
         }
 
-        // Translate the report's verdict into the CI-contract exit codes.
-        // `.exit` carries the message so the caller still gets a one-line
-        // summary on stderr.
-        if report.hasRegression {
-            let count = report.scenes.filter { $0.status == .regression }.count
-            throw CLIError.exit(1, message: "\(count) scene(s) exceeded threshold \(threshold). See \(reportURL.path).")
+        // Build and optionally post the PR comment.
+        let commentOnPR = optionValue("comment-on-pr", in: arguments) == "true"
+        let tokenFlag = optionValue("github-token", in: arguments)
+
+        // Verify all output PNGs exist on disk (fast-fail before building comment).
+        for entry in viewportOutputPaths {
+            guard fileManager.fileExists(atPath: entry.path) else {
+                throw CLIError.commandFailed("Expected output PNG not found on disk: \(entry.path)")
+            }
         }
-        if report.hasMissingBaseline {
-            let count = report.scenes.filter { $0.status == .baselineMissing }.count
-            throw CLIError.exit(2, message: "\(count) scene(s) missing baseline images. Run `evidence accept-baseline` to lock them in.")
+
+        let commentBody = buildWebPRComment(
+            viewportOutputPaths: viewportOutputPaths,
+            config: config
+        )
+
+        if commentOnPR {
+            try postWebPRComment(commentBody, tokenFlag: tokenFlag)
+        } else {
+            stdout(commentBody)
         }
     }
 
-    private func acceptBaseline(_ arguments: [String], config: EvidenceConfig) throws {
-        let force = arguments.contains("--force")
-        let allowDirty = force || config.diff.acceptAllowDirty
+    /// Builds the markdown comment body for a `capture-web` PR comment.
+    ///
+    /// The URL for each viewport image uses the PR branch ref when
+    /// `GITHUB_HEAD_REF` is set in the environment, replacing the inferred
+    /// `/main` suffix so the raw URL resolves on the PR branch rather than
+    /// `main`.
+    private func buildWebPRComment(
+        viewportOutputPaths: [(viewport: String, path: String)],
+        config: EvidenceConfig
+    ) -> String {
+        let date = ISO8601DateFormatter().string(from: Date())
+            .components(separatedBy: "T").first ?? ""
 
-        let sourcePath = optionValue("source", in: arguments) ?? config.evidenceDirectory
-        let baselinePath = optionValue("baseline", in: arguments) ?? config.diff.baselineDirectory
-        let sourceURL = url(forPath: sourcePath)
-        let baselineURL = url(forPath: baselinePath)
+        var lines: [String] = ["## Evidence — \(date) UTC"]
 
-        guard fileManager.fileExists(atPath: sourceURL.path) else {
-            throw CLIError.usage("Source directory '\(sourceURL.path)' does not exist. Run `evidence capture-screenshots` first.")
-        }
+        for entry in viewportOutputPaths {
+            let outputURL = URL(fileURLWithPath: entry.path)
+            var imageURL: String? = markdownURL(for: outputURL, config: config)
 
-        // Refuse to overwrite baselines from a dirty working tree by default.
-        // Baselines are committed into the consumer repo, so a stray local
-        // edit silently flowing into `git add` is the worst-case bug.
-        if !allowDirty {
-            let status = try runner.run(toolPaths.git, ["status", "--porcelain"])
-            if status.exitCode == 0 {
-                let porcelain = status.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !porcelain.isEmpty {
-                    throw CLIError.commandFailed(
-                        "Refusing to accept baseline: working tree has uncommitted changes. " +
-                        "Commit or stash them first, pass --force, or set diff_accept_allow_dirty = true in .evidence.toml."
-                    )
-                }
+            // Replace the inferred `/main` branch suffix with the PR head ref
+            // so the raw URL resolves on the PR branch rather than main.
+            if let headRef = ProcessInfo.processInfo.environment["GITHUB_HEAD_REF"],
+               !headRef.isEmpty,
+               let url = imageURL {
+                // The inferred URL ends with `/main/<relative-path>`. Replace
+                // the `/main/` segment with `/<headRef>/`.
+                imageURL = url.replacingOccurrences(of: "/main/", with: "/\(headRef)/")
+            }
+
+            lines.append("")
+            lines.append("### \(entry.viewport)")
+            if let url = imageURL {
+                lines.append("![\(entry.viewport)](\(url))")
+            } else {
+                lines.append("Screenshot: `\(entry.path)`")
             }
         }
 
-        try fileManager.createDirectory(at: baselineURL, withIntermediateDirectories: true)
+        lines.append("")
+        // TODO: extract Playwright version from node script output (version not currently surfaced by capture-web.js)
+        lines.append("Captured by evidence · Playwright 1.x · Chromium headless")
 
-        // Mirror the latest run's PNGs into the baseline directory. We
-        // deliberately walk the source tree (rather than `cp -R`) so we can
-        // skip non-PNG artifacts like `diff/`, `diff-report.json`, and the
-        // xcresult bundle/markdown pair.
-        let enumerator = fileManager.enumerator(at: sourceURL, includingPropertiesForKeys: [.isRegularFileKey])
-        var copied = 0
-        // Resolve symlinks once so a `/var -> /private/var` redirection on
-        // macOS doesn't smear the prefix and produce bogus relative paths.
-        let resolvedSourcePrefix = sourceURL.resolvingSymlinksInPath().path + "/"
-        if let enumerator {
-            for case let url as URL in enumerator where url.pathExtension.lowercased() == "png" {
-                let resolvedPath = url.resolvingSymlinksInPath().path
-                let relative: String
-                if resolvedPath.hasPrefix(resolvedSourcePrefix) {
-                    relative = String(resolvedPath.dropFirst(resolvedSourcePrefix.count))
-                } else if url.path.hasPrefix(sourceURL.path + "/") {
-                    relative = String(url.path.dropFirst(sourceURL.path.count + 1))
-                } else {
-                    relative = url.lastPathComponent
-                }
-                // Skip our own diff outputs so accepting a baseline never
-                // pulls last-run's diff PNGs into the baseline tree.
-                if relative.hasPrefix("diff/") {
-                    continue
-                }
-                let destinationURL = baselineURL.appendingPathComponent(relative)
-                try fileManager.createDirectory(
-                    at: destinationURL.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-                if fileManager.fileExists(atPath: destinationURL.path) {
-                    try fileManager.removeItem(at: destinationURL)
-                }
-                try fileManager.copyItem(at: url, to: destinationURL)
-                copied += 1
-            }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Posts `body` as a GitHub PR comment via the REST API.
+    ///
+    /// Reads `GITHUB_REPOSITORY` and `GITHUB_REF` from the process environment
+    /// to determine the repo and PR number.  `GITHUB_TOKEN` is used unless
+    /// `--github-token` was passed on the CLI.
+    private func postWebPRComment(_ body: String, tokenFlag: String?) throws {
+        let env = ProcessInfo.processInfo.environment
+
+        let token: String
+        if let t = tokenFlag, !t.isEmpty {
+            token = t
+        } else if let t = env["GITHUB_TOKEN"], !t.isEmpty {
+            token = t
+        } else {
+            throw CLIError.commandFailed(
+                "--comment-on-pr true requires a GitHub token. Pass --github-token <token> or set the GITHUB_TOKEN environment variable."
+            )
         }
 
-        stdout("Accepted \(copied) baseline image(s) at \(baselineURL.path).")
+        guard let repo = env["GITHUB_REPOSITORY"], !repo.isEmpty else {
+            throw CLIError.commandFailed(
+                "GITHUB_REPOSITORY environment variable is not set. This is expected on GitHub Actions pull_request events."
+            )
+        }
+
+        // Extract PR number from GITHUB_REF (format: refs/pull/N/merge).
+        guard let githubRef = env["GITHUB_REF"],
+              let prNumber = Self.extractPRNumber(from: githubRef) else {
+            throw CLIError.commandFailed(
+                "Could not determine PR number from GITHUB_REF '\(env["GITHUB_REF"] ?? "(unset)")'. Expected format: refs/pull/N/merge."
+            )
+        }
+
+        let apiURL = "https://api.github.com/repos/\(repo)/issues/\(prNumber)/comments"
+        let payload = try JSONSerialization.data(
+            withJSONObject: ["body": body],
+            options: []
+        )
+        let payloadString = String(data: payload, encoding: .utf8) ?? "{}"
+
+        let result = try runner.run(
+            "/usr/bin/curl",
+            [
+                "-s",
+                "-X", "POST",
+                "-H", "Authorization: Bearer \(token)",
+                "-H", "Content-Type: application/json",
+                apiURL,
+                "-d", payloadString
+            ]
+        )
+
+        guard result.exitCode == 0 else {
+            throw CLIError.commandFailed("Failed to post PR comment: \(result.stderr)")
+        }
+
+        stdout("Posted PR comment to \(apiURL)")
+    }
+
+    /// Extracts the PR number from a GitHub Actions `GITHUB_REF` value.
+    ///
+    /// - `"refs/pull/42/merge"` → `"42"`
+    /// - Anything else → `nil`
+    public static func extractPRNumber(from githubRef: String) -> String? {
+        // refs/pull/<number>/merge
+        let components = githubRef.split(separator: "/", omittingEmptySubsequences: false)
+        guard components.count >= 4,
+              components[0] == "refs",
+              components[1] == "pull",
+              components[3] == "merge" else {
+            return nil
+        }
+        let number = String(components[2])
+        return number.isEmpty ? nil : number
+    }
+
+    /// Resolves a named viewport preset to a `WxH` spec string, or passes
+    /// through custom `WxH` strings unchanged.
+    ///
+    /// - `desktop-1440` → `1440x900`
+    /// - `mobile-390`   → `390x844`
+    /// - `WxH`          → `WxH` (passed through)
+    public static func resolveViewport(_ viewport: String) -> String {
+        switch viewport {
+        case "desktop-1440":
+            return "1440x900"
+        case "mobile-390":
+            return "390x844"
+        default:
+            return viewport
+        }
+    }
+
+    /// Derives a filesystem-safe page slug from a URL path component.
+    ///
+    /// - Root paths (`/` or empty) → `"index"`
+    /// - `/about/team` → `"about-team"`
+    /// - `/products/widget-pro` → `"products-widget-pro"`
+    public static func pageSlug(from urlString: String) -> String {
+        guard let url = URL(string: urlString), url.scheme != nil else {
+            return "index"
+        }
+        let path = url.path
+        if path.isEmpty || path == "/" {
+            return "index"
+        }
+        // Strip leading/trailing slashes, replace path separators with dashes,
+        // and lowercase for consistency.
+        let slug = path
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .replacingOccurrences(of: "/", with: "-")
+            .lowercased()
+        return slug.isEmpty ? "index" : slug
     }
 
     private func uploadScreenshots(_ arguments: [String], config: EvidenceConfig) throws {
@@ -508,21 +600,6 @@ public struct EvidenceCLI {
             return URL(fileURLWithPath: path)
         }
         return currentDirectory.appendingPathComponent(path)
-    }
-
-    /// Join two path-like strings while preserving relative-vs-absolute
-    /// semantics. `URL(fileURLWithPath:)` would silently rebase a relative
-    /// `"docs/build-evidence/diff"` against the process CWD, which breaks
-    /// tests that inject `currentDirectory` and breaks monorepos that run
-    /// `evidence` from a sub-folder.
-    private func joinPath(_ left: String, _ right: String) -> String {
-        if right.hasPrefix("/") {
-            return right
-        }
-        if left.hasSuffix("/") {
-            return left + right
-        }
-        return left + "/" + right
     }
 
     private func inferredRepositoryRawBaseURL() -> String? {
@@ -583,16 +660,21 @@ public struct ToolPaths: Equatable {
     public var magick: String
     public var ffmpeg: String
     public var git: String
+    /// Path to the `node` binary. Used by `capture-web` to invoke the bundled
+    /// Playwright script.
+    public var node: String
 
     public init(
         xcrun: String = "/usr/bin/xcrun",
         magick: String = "/opt/homebrew/bin/magick",
         ffmpeg: String = "/opt/homebrew/bin/ffmpeg",
-        git: String = "/usr/bin/git"
+        git: String = "/usr/bin/git",
+        node: String = "/usr/local/bin/node"
     ) {
         self.xcrun = xcrun
         self.magick = magick
         self.ffmpeg = ffmpeg
         self.git = git
+        self.node = node
     }
 }

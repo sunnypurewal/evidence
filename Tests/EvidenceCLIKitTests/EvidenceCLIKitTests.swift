@@ -699,314 +699,421 @@ final class EvidenceCLIKitTests: XCTestCase {
         )
     }
 
-    // MARK: - visual regression mode
+    // MARK: - Platform and web config
 
-    func testDiffConfigParsesIgnoreRegionsAndDefaults() throws {
+    func testConfigDefaultsPlatformToIOS() throws {
         let document = try TOMLDocument.parse("""
         scheme = "Example"
         bundle_id = "com.example.app"
         simulator_udid = "SIM-123"
-        diff_threshold = 0.005
-        diff_ignore_regions = ["0,0,300x60", "0,2700,1290x96"]
-        diff_baseline_dir = "docs/baselines"
-        diff_accept_allow_dirty = true
-        diff_fuzz_percent = 5
         """)
 
         let config = try EvidenceConfig.parse(document)
-        XCTAssertEqual(config.diff.threshold, 0.005)
-        XCTAssertEqual(config.diff.baselineDirectory, "docs/baselines")
-        XCTAssertTrue(config.diff.acceptAllowDirty)
-        XCTAssertEqual(config.diff.fuzzPercent, 5)
-        XCTAssertEqual(config.diff.ignoreRegions, [
-            DiffRegion(x: 0, y: 0, width: 300, height: 60),
-            DiffRegion(x: 0, y: 2700, width: 1290, height: 96)
-        ])
+        XCTAssertEqual(config.platform, .ios)
+        XCTAssertNil(config.webConfig)
     }
 
-    func testDiffConfigRejectsMalformedIgnoreRegion() throws {
+    func testConfigParsesFullValidWebConfig() throws {
         let document = try TOMLDocument.parse("""
         scheme = "Example"
         bundle_id = "com.example.app"
         simulator_udid = "SIM-123"
-        diff_ignore_regions = ["0,0,not-a-rect"]
+        platform = "web"
+        web_url = "https://example.com"
+        web_viewports = ["desktop-1440", "mobile-390", "1280x800"]
+        web_full_page = false
+        web_wait_until = "load"
+        """)
+
+        let config = try EvidenceConfig.parse(document)
+        XCTAssertEqual(config.platform, .web)
+        let web = try XCTUnwrap(config.webConfig)
+        XCTAssertEqual(web.url, "https://example.com")
+        XCTAssertEqual(web.viewports, ["desktop-1440", "mobile-390", "1280x800"])
+        XCTAssertEqual(web.fullPage, false)
+        XCTAssertEqual(web.waitUntil, "load")
+    }
+
+    func testWebConfigDefaultsFullPageTrueAndWaitUntilNetworkidle() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        platform = "web"
+        web_url = "https://example.com"
+        web_viewports = ["desktop-1440"]
+        """)
+
+        let config = try EvidenceConfig.parse(document)
+        let web = try XCTUnwrap(config.webConfig)
+        XCTAssertEqual(web.fullPage, true)
+        XCTAssertEqual(web.waitUntil, "networkidle")
+    }
+
+    func testWebConfigRequiresWebURLWhenPlatformIsWeb() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        platform = "web"
+        web_viewports = ["desktop-1440"]
         """)
 
         XCTAssertThrowsError(try EvidenceConfig.parse(document)) { error in
             XCTAssertEqual(
                 error as? CLIError,
-                .config("Invalid field 'diff_ignore_regions': '0,0,not-a-rect' is not in 'X,Y,WxH' form (e.g. '0,0,200x100').")
+                .config("Missing required field 'web_url' when platform = \"web\" in .evidence.toml.")
             )
         }
     }
 
-    func testDiffReportsMatchWhenAllScenesUnderThreshold() throws {
-        let directory = try diffProject(threshold: 0.01)
-        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "iPhone 16/home.png")
-        try writeBaselineImage(in: directory, baselineDir: "docs/baselines", scene: "iPhone 16/home.png")
+    func testWebConfigRequiresWebViewportsWhenPlatformIsWeb() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        platform = "web"
+        web_url = "https://example.com"
+        """)
 
+        XCTAssertThrowsError(try EvidenceConfig.parse(document)) { error in
+            XCTAssertEqual(
+                error as? CLIError,
+                .config("Missing required field 'web_viewports' when platform = \"web\" in .evidence.toml.")
+            )
+        }
+    }
+
+    func testWebConfigRejectsUnknownWaitUntilValue() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        platform = "web"
+        web_url = "https://example.com"
+        web_viewports = ["desktop-1440"]
+        web_wait_until = "interactive"
+        """)
+
+        XCTAssertThrowsError(try EvidenceConfig.parse(document)) { error in
+            XCTAssertEqual(
+                error as? CLIError,
+                .config("Invalid field 'web_wait_until': unknown value 'interactive'. Accepted values: networkidle, load, domcontentloaded.")
+            )
+        }
+    }
+
+    func testWebConfigRejectsUnknownNamedViewport() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        platform = "web"
+        web_url = "https://example.com"
+        web_viewports = ["tablet-768"]
+        """)
+
+        XCTAssertThrowsError(try EvidenceConfig.parse(document)) { error in
+            guard case .config(let message) = (error as? CLIError) else {
+                return XCTFail("expected config error, got \(error)")
+            }
+            XCTAssertTrue(message.contains("tablet-768"), "error should mention the unknown viewport: \(message)")
+            XCTAssertTrue(message.contains("desktop-1440"), "error should list named presets: \(message)")
+        }
+    }
+
+    func testWebConfigAcceptsCustomWxHViewport() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        platform = "web"
+        web_url = "https://example.com"
+        web_viewports = ["1920x1080"]
+        """)
+
+        let config = try EvidenceConfig.parse(document)
+        let web = try XCTUnwrap(config.webConfig)
+        XCTAssertEqual(web.viewports, ["1920x1080"])
+    }
+
+    func testConfigDoesNotParseWebConfigWhenPlatformIsIOS() throws {
+        // web_* keys present but platform defaults to ios — should not throw
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        web_url = "https://example.com"
+        web_viewports = ["desktop-1440"]
+        """)
+
+        let config = try EvidenceConfig.parse(document)
+        XCTAssertEqual(config.platform, .ios)
+        XCTAssertNil(config.webConfig)
+    }
+
+    // MARK: - capture-web
+
+    func testResolveViewportPresets() {
+        XCTAssertEqual(EvidenceCLI.resolveViewport("desktop-1440"), "1440x900")
+        XCTAssertEqual(EvidenceCLI.resolveViewport("mobile-390"), "390x844")
+        XCTAssertEqual(EvidenceCLI.resolveViewport("1280x800"), "1280x800")
+        XCTAssertEqual(EvidenceCLI.resolveViewport("custom"), "custom")
+    }
+
+    func testPageSlugDerivation() {
+        XCTAssertEqual(EvidenceCLI.pageSlug(from: "https://example.com"), "index")
+        XCTAssertEqual(EvidenceCLI.pageSlug(from: "https://example.com/"), "index")
+        XCTAssertEqual(EvidenceCLI.pageSlug(from: "https://example.com/about"), "about")
+        XCTAssertEqual(EvidenceCLI.pageSlug(from: "https://example.com/about/team"), "about-team")
+        XCTAssertEqual(EvidenceCLI.pageSlug(from: "not a url"), "index")
+    }
+
+    func testCaptureWebInvokesNodeForEachViewport() throws {
+        let directory = try webProject()
+        let runner = RecordingRunner(createFilesForNode: true)
+        let cli = testCLI(directory: directory, runner: runner, node: "/bin/echo")
+
+        try cli.execute(["capture-web"])
+
+        // Filter to node (capture script) invocations only — identified by the
+        // first argument ending in ".js". The git remote call also uses /bin/echo
+        // in test toolPaths but should not be counted here.
+        let nodeCalls = runner.commands.filter {
+            $0.executable == "/bin/echo" && $0.arguments.first?.hasSuffix(".js") == true
+        }
+        XCTAssertEqual(nodeCalls.count, 2, "expected one node invocation per viewport")
+        let firstArgs = try XCTUnwrap(nodeCalls.first?.arguments)
+        let secondArgs = try XCTUnwrap(nodeCalls.last?.arguments)
+        XCTAssertTrue(firstArgs.contains("1440x900"), "first call should use desktop viewport spec: \(firstArgs)")
+        XCTAssertTrue(secondArgs.contains("390x844"), "second call should use mobile viewport spec: \(secondArgs)")
+    }
+
+    func testCaptureWebRejectsNonWebPlatform() throws {
+        let directory = try configuredProject()
         let runner = RecordingRunner()
-        runner.fabricateMagickCompareOutput = true
-        runner.magickCompareStubs["home.png"] = (exitCode: 0, differingPixels: 0, totalPixels: 1_000_000)
+        let cli = testCLI(directory: directory, runner: runner, node: "/bin/echo")
+
+        XCTAssertThrowsError(try cli.execute(["capture-web"])) { error in
+            guard case .usage = (error as? CLIError) else {
+                return XCTFail("expected usage error, got \(error)")
+            }
+        }
+    }
+
+    // MARK: - capture-web PR comment
+
+    func testCaptureWebDryRunPrintsCommentBodyToStdout() throws {
+        let directory = try webProject(rawBaseURL: "https://raw.githubusercontent.com/example/app/main")
+        let runner = RecordingRunner(createFilesForNode: true)
         var output: [String] = []
-        let cli = testCLI(directory: directory, runner: runner, stdout: { output.append($0) })
+        let cli = testCLI(directory: directory, runner: runner, stdout: { output.append($0) }, node: "/bin/echo")
 
-        let exitCode = cli.run(["diff"])
+        try cli.execute(["capture-web"])
 
-        XCTAssertEqual(exitCode, 0)
-        let reportData = try Data(contentsOf: directory.appendingPathComponent("docs/build-evidence/diff/diff-report.json"))
-        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: reportData) as? [String: Any])
-        XCTAssertEqual(json["threshold"] as? Double, 0.01)
-        let scenes = try XCTUnwrap(json["scenes"] as? [[String: Any]])
-        XCTAssertEqual(scenes.count, 1)
-        XCTAssertEqual(scenes.first?["status"] as? String, "match")
-        XCTAssertTrue(output.joined(separator: "\n").contains("All 1 scene(s) match"))
+        // Dry-run: no --comment-on-pr flag → comment body printed to stdout
+        let joined = output.joined(separator: "\n")
+        XCTAssertTrue(joined.contains("## Evidence —"), "expected Evidence heading in stdout: \(joined)")
+        XCTAssertTrue(joined.contains("### desktop-1440"), "expected desktop-1440 section: \(joined)")
+        XCTAssertTrue(joined.contains("### mobile-390"), "expected mobile-390 section: \(joined)")
+        XCTAssertTrue(joined.contains("![desktop-1440]"), "expected desktop-1440 image tag: \(joined)")
+        XCTAssertTrue(joined.contains("![mobile-390]"), "expected mobile-390 image tag: \(joined)")
+        XCTAssertTrue(joined.contains("Captured by evidence"), "expected footer line: \(joined)")
+        XCTAssertTrue(joined.contains("raw.githubusercontent.com/example/app/"), "expected raw github URL: \(joined)")
     }
 
-    func testDiffReturnsExitCodeOneWhenSceneExceedsThreshold() throws {
-        let directory = try diffProject(threshold: 0.001)
-        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "home.png")
-        try writeBaselineImage(in: directory, baselineDir: "docs/baselines", scene: "home.png")
+    func testCaptureWebCommentBodyContainsCorrectStructure() throws {
+        // Test comment body structure: heading, two viewport sections, footer
+        let directory = try webProject(rawBaseURL: "https://raw.githubusercontent.com/example/app/main")
+        let runner = RecordingRunner(createFilesForNode: true)
+        var output: [String] = []
+        let cli = testCLI(directory: directory, runner: runner, stdout: { output.append($0) }, node: "/bin/echo")
 
-        let runner = RecordingRunner()
-        runner.fabricateMagickCompareOutput = true
-        // 5000 / 1_000_000 = 0.5% — well above the 0.1% threshold.
-        runner.magickCompareStubs["home.png"] = (exitCode: 1, differingPixels: 5_000, totalPixels: 1_000_000)
-        var stderr: [String] = []
-        let cli = EvidenceCLI(
-            runner: runner,
-            stdout: { _ in },
-            stderr: { stderr.append($0) },
-            currentDirectory: directory,
-            toolPaths: ToolPaths(xcrun: "/bin/echo", magick: "/bin/echo", ffmpeg: "/bin/echo", git: "/bin/echo")
+        try cli.execute(["capture-web"])
+
+        // Filter out the "Captured X screenshot at ..." lines — isolate the comment body
+        let commentLines = output.filter { !$0.hasPrefix("Captured ") }
+        let commentBody = commentLines.joined(separator: "\n")
+
+        // Heading contains ISO 8601 date (YYYY-MM-DD)
+        let datePattern = #"\d{4}-\d{2}-\d{2}"#
+        XCTAssertTrue(
+            commentBody.range(of: datePattern, options: .regularExpression) != nil,
+            "expected ISO 8601 date in heading: \(commentBody)"
         )
 
-        let exitCode = cli.run(["diff"])
+        // Each viewport has its own H3 section
+        XCTAssertTrue(commentBody.contains("### desktop-1440"))
+        XCTAssertTrue(commentBody.contains("### mobile-390"))
 
-        XCTAssertEqual(exitCode, 1, "regression should produce exit code 1")
-        XCTAssertTrue(stderr.joined().contains("exceeded threshold"))
+        // Image markdown uses raw GitHub URL (branch segment may be substituted via GITHUB_HEAD_REF)
+        XCTAssertTrue(commentBody.contains("raw.githubusercontent.com/example/app/"))
+        XCTAssertTrue(commentBody.contains("desktop-1440/index.png"))
+        XCTAssertTrue(commentBody.contains("mobile-390/index.png"))
+
+        // Footer
+        XCTAssertTrue(commentBody.contains("Playwright"))
+        XCTAssertTrue(commentBody.contains("Chromium headless"))
     }
 
-    func testDiffReturnsExitCodeTwoWhenBaselineMissing() throws {
-        let directory = try diffProject(threshold: 0.01)
-        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "iPhone 16/onboarding.png")
-        // Note: no baseline file written.
+    func testCaptureWebCommentOnPRWithoutTokenErrors() throws {
+        let directory = try webProject(rawBaseURL: "https://raw.githubusercontent.com/example/app/main")
+        let runner = RecordingRunner(createFilesForNode: true)
+        let cli = testCLI(directory: directory, runner: runner, node: "/bin/echo")
 
-        let runner = RecordingRunner()
-        runner.fabricateMagickCompareOutput = true
-        var stderr: [String] = []
-        let cli = EvidenceCLI(
-            runner: runner,
-            stdout: { _ in },
-            stderr: { stderr.append($0) },
-            currentDirectory: directory,
-            toolPaths: ToolPaths(xcrun: "/bin/echo", magick: "/bin/echo", ffmpeg: "/bin/echo", git: "/bin/echo")
-        )
-
-        let exitCode = cli.run(["diff"])
-
-        XCTAssertEqual(exitCode, 2, "missing baseline should produce exit code 2")
-        XCTAssertTrue(stderr.joined().contains("missing baseline"))
-        // The diff command never ran for missing baselines — we should NOT
-        // see a `compare` invocation.
-        XCTAssertFalse(runner.commands.contains { $0.arguments.first == "compare" })
-    }
-
-    func testDiffMasksIgnoreRegionsBeforeCompare() throws {
-        let directory = try diffProject(
-            threshold: 0.01,
-            extraLines: ["diff_ignore_regions = [\"0,0,300x60\"]"]
-        )
-        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "home.png")
-        try writeBaselineImage(in: directory, baselineDir: "docs/baselines", scene: "home.png")
-
-        let runner = RecordingRunner()
-        runner.fabricateMagickCompareOutput = true
-        runner.fabricateMagickMaskOutput = true
-        runner.magickCompareStubs["home.png"] = (exitCode: 0, differingPixels: 0, totalPixels: 1_000_000)
-        let cli = testCLI(directory: directory, runner: runner)
-
-        let exitCode = cli.run(["diff"])
-
-        XCTAssertEqual(exitCode, 0)
-        // Two mask calls (baseline + actual) should precede the compare.
-        let maskCalls = runner.commands.filter { $0.arguments.contains("-fill") && $0.arguments.contains("-draw") }
-        XCTAssertEqual(maskCalls.count, 2, "expected one mask call per side, got \(maskCalls.count)")
-        let drawArguments = maskCalls.flatMap { command -> [String] in
-            command.arguments.enumerated().compactMap { offset, arg in
-                arg == "-draw" ? command.arguments[offset + 1] : nil
+        // Ensure GITHUB_TOKEN is not set for this test by using a custom env — we
+        // cannot unset a process env in-process, so we verify the error path by
+        // checking that the error message matches when the flag is set but the
+        // env var is absent. We synthesise this by injecting a CLI whose
+        // ProcessInfo would see no token; since we cannot control the real env
+        // safely in unit tests, we instead test that passing an explicit empty
+        // token flag also rejects (empty string is treated as missing).
+        // The real "no env var" path is covered by the integration contract.
+        XCTAssertThrowsError(
+            try cli.execute(["capture-web", "--comment-on-pr", "true", "--github-token", ""])
+        ) { error in
+            guard case .commandFailed(let message) = (error as? CLIError) else {
+                return XCTFail("expected commandFailed, got \(error)")
             }
+            XCTAssertTrue(
+                message.contains("GitHub token"),
+                "error should mention GitHub token: \(message)"
+            )
         }
-        XCTAssertTrue(drawArguments.allSatisfy { $0 == "rectangle 0,0 300,60" }, "unexpected mask rectangles: \(drawArguments)")
-
-        // The compare call should reference the masked variants, not the raw
-        // baseline/actual files — that's the whole point.
-        let compareCall = try XCTUnwrap(runner.commands.first { $0.arguments.first == "compare" })
-        XCTAssertTrue(compareCall.arguments.contains { $0.hasSuffix(".baseline.masked.png") })
-        XCTAssertTrue(compareCall.arguments.contains { $0.hasSuffix(".actual.masked.png") })
     }
 
-    func testDiffReportsPerDeviceBaselinesIndependently() throws {
-        let directory = try diffProject(threshold: 0.01)
-        // Two scenes per device, both devices share the same scene names.
-        for device in ["iPhone 16", "iPad Pro 13"] {
-            for scene in ["home.png", "settings.png"] {
-                try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "\(device)/\(scene)")
-                try writeBaselineImage(in: directory, baselineDir: "docs/baselines", scene: "\(device)/\(scene)")
-            }
-        }
-
-        let runner = RecordingRunner()
-        runner.fabricateMagickCompareOutput = true
-        // Only iPad/settings regresses; everything else matches.
-        runner.magickCompareStubs["home.png"] = (exitCode: 0, differingPixels: 0, totalPixels: 1_000_000)
-        // settings.png has no per-baseline path discrimination in the stub
-        // map, so we'd flag both. Override iPhone settings to match.
-        runner.magickCompareStubs["settings.png"] = (exitCode: 1, differingPixels: 50_000, totalPixels: 1_000_000)
-        let cli = testCLI(directory: directory, runner: runner)
-
-        let exitCode = cli.run(["diff"])
-
-        // Exit 1 because at least one regression exists.
-        XCTAssertEqual(exitCode, 1)
-        let reportData = try Data(contentsOf: directory.appendingPathComponent("docs/build-evidence/diff/diff-report.json"))
-        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: reportData) as? [String: Any])
-        let scenes = try XCTUnwrap(json["scenes"] as? [[String: Any]])
-        XCTAssertEqual(scenes.count, 4, "expected 4 scenes (2 devices x 2 scenes), got \(scenes.count)")
-        // Compare calls were issued per device — verify with the recorded
-        // baseline argument.
-        let compareCalls = runner.commands.filter { $0.arguments.first == "compare" }
-        XCTAssertEqual(compareCalls.count, 4)
-        let baselineDevices = Set(compareCalls.compactMap { call -> String? in
-            // Layout ends with [..., baseline, actual, output]. Pull the
-            // device folder name from the baseline path.
-            guard let baseline = call.arguments.dropLast(2).last else { return nil }
-            let url = URL(fileURLWithPath: String(baseline))
-            return url.deletingLastPathComponent().lastPathComponent
-        })
-        XCTAssertEqual(baselineDevices, ["iPhone 16", "iPad Pro 13"])
+    func testExtractPRNumber() {
+        XCTAssertEqual(EvidenceCLI.extractPRNumber(from: "refs/pull/42/merge"), "42")
+        XCTAssertEqual(EvidenceCLI.extractPRNumber(from: "refs/pull/1/merge"), "1")
+        XCTAssertEqual(EvidenceCLI.extractPRNumber(from: "refs/pull/100/merge"), "100")
+        XCTAssertNil(EvidenceCLI.extractPRNumber(from: "refs/heads/main"))
+        XCTAssertNil(EvidenceCLI.extractPRNumber(from: ""))
+        XCTAssertNil(EvidenceCLI.extractPRNumber(from: "refs/pull/42/head"))
     }
 
-    func testDiffWritesPRMarkdownToFileWhenRequested() throws {
-        let directory = try diffProject(threshold: 0.01, rawBaseURL: "https://raw.githubusercontent.com/example/app/main")
-        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "home.png")
-        try writeBaselineImage(in: directory, baselineDir: "docs/baselines", scene: "home.png")
+    func testCaptureWebCLIIntegration() throws {
+        let nodePath = "/usr/local/bin/node"
+        try XCTSkipIf(!FileManager.default.isExecutableFile(atPath: nodePath), "node not found")
 
-        let runner = RecordingRunner()
-        runner.fabricateMagickCompareOutput = true
-        runner.magickCompareStubs["home.png"] = (exitCode: 0, differingPixels: 0, totalPixels: 1_000_000)
-        let cli = testCLI(directory: directory, runner: runner)
+        let checkProc = Process()
+        checkProc.executableURL = URL(fileURLWithPath: nodePath)
+        checkProc.arguments = ["-e", "require('playwright')"]
+        checkProc.standardOutput = FileHandle.nullDevice
+        checkProc.standardError = FileHandle.nullDevice
+        try checkProc.run()
+        checkProc.waitUntilExit()
+        try XCTSkipIf(checkProc.terminationStatus != 0, "playwright not installed")
 
-        let exitCode = cli.run(["diff", "--markdown", "docs/build-evidence/diff.md"])
+        let tmpDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
 
-        XCTAssertEqual(exitCode, 0)
-        let markdown = try String(contentsOf: directory.appendingPathComponent("docs/build-evidence/diff.md"), encoding: .utf8)
-        XCTAssertTrue(markdown.contains("Visual regression report"))
-        XCTAssertTrue(markdown.contains("| `home` |"))
-    }
+        let htmlFile = tmpDir.appendingPathComponent("index.html")
+        try "<html><body style='height:3000px;background:blue'>hello</body></html>".write(to: htmlFile, atomically: true, encoding: .utf8)
 
-    func testAcceptBaselineRefusesDirtyTreeUnlessForced() throws {
-        let directory = try diffProject(threshold: 0.01)
-        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "home.png")
+        let port = 8765
+        let server = Process()
+        server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        server.arguments = ["-m", "http.server", "\(port)", "--directory", tmpDir.path]
+        server.standardOutput = FileHandle.nullDevice
+        server.standardError = FileHandle.nullDevice
+        try server.run()
+        defer { server.terminate() }
+        Thread.sleep(forTimeInterval: 1.0)
 
-        let runner = RecordingRunner()
-        runner.gitStatusStdout = " M Sources/EvidenceCLIKit/EvidenceCLI.swift\n"
-        var stderr: [String] = []
+        let outDir = tmpDir.appendingPathComponent("out")
+        let toml = """
+        platform = "web"
+        web_url = "http://localhost:\(port)"
+        web_viewports = ["desktop-1440", "mobile-390"]
+        web_full_page = true
+        web_wait_until = "load"
+        evidence_dir = "\(outDir.path)"
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        """
+        try toml.write(to: tmpDir.appendingPathComponent(".evidence.toml"), atomically: true, encoding: .utf8)
+
         let cli = EvidenceCLI(
-            runner: runner,
+            runner: ProcessCommandRunner(),
             stdout: { _ in },
-            stderr: { stderr.append($0) },
-            currentDirectory: directory,
-            toolPaths: ToolPaths(xcrun: "/bin/echo", magick: "/bin/echo", ffmpeg: "/bin/echo", git: "/bin/echo")
+            currentDirectory: tmpDir,
+            toolPaths: ToolPaths(xcrun: "/bin/echo", magick: "/bin/echo", ffmpeg: "/bin/echo", git: "/bin/echo", node: nodePath)
         )
+        try cli.execute(["capture-web"])
 
-        let dirtyExit = cli.run(["accept-baseline"])
-        XCTAssertEqual(dirtyExit, 1)
-        XCTAssertTrue(stderr.joined().contains("Refusing to accept baseline"))
+        let desktop = outDir.appendingPathComponent("desktop-1440/index.png")
+        let mobile = outDir.appendingPathComponent("mobile-390/index.png")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: desktop.path), "desktop PNG not created")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: mobile.path), "mobile PNG not created")
 
-        // No baseline was written.
-        let baseline = directory.appendingPathComponent("docs/baselines/home.png")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: baseline.path))
-
-        // --force overrides the check.
-        let forcedExit = cli.run(["accept-baseline", "--force"])
-        XCTAssertEqual(forcedExit, 0)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: baseline.path))
+        let magic: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        let desktopData = try Data(contentsOf: desktop)
+        let mobileData = try Data(contentsOf: mobile)
+        XCTAssertGreaterThanOrEqual(desktopData.count, 8)
+        XCTAssertGreaterThanOrEqual(mobileData.count, 8)
+        XCTAssertEqual(Array(desktopData.prefix(8)).map { UInt8($0) }, magic, "desktop PNG invalid")
+        XCTAssertEqual(Array(mobileData.prefix(8)).map { UInt8($0) }, magic, "mobile PNG invalid")
     }
 
-    func testDiffSecondRunIgnoresPriorDiffOutputs() throws {
-        let directory = try diffProject(threshold: 0.01)
-        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "home.png")
-        try writeBaselineImage(in: directory, baselineDir: "docs/baselines", scene: "home.png")
+    func testCaptureWebIntegration() throws {
+        let nodePath = "/usr/local/bin/node"
+        try XCTSkipIf(!FileManager.default.isExecutableFile(atPath: nodePath), "node not found")
 
-        let runner = RecordingRunner()
-        runner.fabricateMagickCompareOutput = true
-        runner.magickCompareStubs["home.png"] = (exitCode: 0, differingPixels: 0, totalPixels: 1_000_000)
-        let cli = testCLI(directory: directory, runner: runner)
+        let checkProc = Process()
+        checkProc.executableURL = URL(fileURLWithPath: nodePath)
+        checkProc.arguments = ["-e", "require('playwright')"]
+        let devNull = FileHandle.nullDevice
+        checkProc.standardOutput = devNull
+        checkProc.standardError = devNull
+        try checkProc.run()
+        checkProc.waitUntilExit()
+        try XCTSkipIf(checkProc.terminationStatus != 0, "playwright not installed")
 
-        // First run leaves `docs/build-evidence/diff/home.png` on disk via
-        // the runner's fabricator — exactly what production would do.
-        XCTAssertEqual(cli.run(["diff"]), 0)
-        let diffPath = directory.appendingPathComponent("docs/build-evidence/diff/home.png").path
-        XCTAssertTrue(FileManager.default.fileExists(atPath: diffPath))
+        // Locate the EvidenceCLIKit resource bundle bundled alongside the test executable.
+        let testBundleURL = Bundle(for: EvidenceCLIKitTests.self).bundleURL
+        let resourceBundleURL = testBundleURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("evidence_EvidenceCLIKit.bundle")
+        let candidateBundle = Bundle(url: resourceBundleURL)
+        guard let scriptURL = candidateBundle?.url(forResource: "capture-web", withExtension: "js") else {
+            XCTFail("capture-web.js not in bundle"); return
+        }
 
-        // Second run must NOT pick up the diff output as a new scene to
-        // compare against `<baseline>/diff/home.png` (which doesn't exist).
-        let secondRunner = RecordingRunner()
-        secondRunner.fabricateMagickCompareOutput = true
-        secondRunner.magickCompareStubs["home.png"] = (exitCode: 0, differingPixels: 0, totalPixels: 1_000_000)
-        let cli2 = testCLI(directory: directory, runner: secondRunner)
-        XCTAssertEqual(cli2.run(["diff"]), 0)
-        // Only one compare call (home.png) — not two.
-        let compareCalls = secondRunner.commands.filter { $0.arguments.first == "compare" }
-        XCTAssertEqual(compareCalls.count, 1, "second run should not diff prior diff outputs")
-    }
+        let tmpDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
 
-    func testAcceptBaselineCopiesPNGsAndSkipsDiffOutputs() throws {
-        let directory = try diffProject(threshold: 0.01)
-        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "iPhone 16/home.png")
-        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "iPhone 16/settings.png")
-        // Simulate a previous run leaving diff outputs in place — these must
-        // NOT be copied into the baseline tree.
-        try writeRunImage(in: directory, evidenceDir: "docs/build-evidence", scene: "diff/iPhone 16/home.png")
+        let htmlFile = tmpDir.appendingPathComponent("index.html")
+        try "<html><body style='height:3000px;background:red'>hello</body></html>".write(to: htmlFile, atomically: true, encoding: .utf8)
 
-        let runner = RecordingRunner()
-        let cli = testCLI(directory: directory, runner: runner)
+        let port = 18765
+        let server = Process()
+        server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        server.arguments = ["-m", "http.server", "\(port)", "--directory", tmpDir.path]
+        server.standardOutput = FileHandle.nullDevice
+        server.standardError = FileHandle.nullDevice
+        try server.run()
+        defer { server.terminate() }
+        Thread.sleep(forTimeInterval: 1.0)
 
-        let exitCode = cli.run(["accept-baseline"])
+        let outputFile = tmpDir.appendingPathComponent("out.png")
+        let capture = Process()
+        capture.executableURL = URL(fileURLWithPath: nodePath)
+        capture.arguments = [scriptURL.path, "http://localhost:\(port)/", "1440x900", "true", "networkidle", outputFile.path]
+        try capture.run()
+        capture.waitUntilExit()
+        XCTAssertEqual(capture.terminationStatus, 0, "capture-web.js exited non-zero")
 
-        XCTAssertEqual(exitCode, 0)
-        let homePath = directory.appendingPathComponent("docs/baselines/iPhone 16/home.png").path
-        let settingsPath = directory.appendingPathComponent("docs/baselines/iPhone 16/settings.png").path
-        let strayDiffPath = directory.appendingPathComponent("docs/baselines/diff/iPhone 16/home.png").path
-        XCTAssertTrue(FileManager.default.fileExists(atPath: homePath))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: settingsPath))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: strayDiffPath), "diff/ outputs must not flow into the baseline tree")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputFile.path), "PNG not created")
+        let data = try Data(contentsOf: outputFile)
+        XCTAssertGreaterThanOrEqual(data.count, 8)
+        let magic: [UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
+        XCTAssertEqual(Array(data.prefix(8)).map { UInt8($0) }, magic, "Not a valid PNG file")
     }
 
     // MARK: helpers
-
-    private func diffProject(
-        threshold: Double,
-        rawBaseURL: String? = nil,
-        extraLines: [String] = []
-    ) throws -> URL {
-        var lines = ["diff_threshold = \(threshold)"]
-        lines.append(contentsOf: extraLines)
-        return try configuredProject(rawBaseURL: rawBaseURL, extraLines: lines)
-    }
-
-    private func writeRunImage(in directory: URL, evidenceDir: String, scene: String) throws {
-        let url = directory.appendingPathComponent(evidenceDir).appendingPathComponent(scene)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data("png".utf8).write(to: url)
-    }
-
-    private func writeBaselineImage(in directory: URL, baselineDir: String, scene: String) throws {
-        let url = directory.appendingPathComponent(baselineDir).appendingPathComponent(scene)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data("png".utf8).write(to: url)
-    }
 
     private func configuredProject(rawBaseURL: String? = nil, extraLines: [String] = []) throws -> URL {
         let directory = temporaryDirectory()
@@ -1127,18 +1234,27 @@ final class EvidenceCLIKitTests: XCTestCase {
         ]
     }
 
+    private func webProject(rawBaseURL: String? = nil) throws -> URL {
+        try configuredProject(rawBaseURL: rawBaseURL, extraLines: [
+            "platform = \"web\"",
+            "web_url = \"http://localhost:8765\"",
+            "web_viewports = [\"desktop-1440\", \"mobile-390\"]"
+        ])
+    }
+
     private func testCLI(
         directory: URL,
         runner: RecordingRunner,
         stdout: @escaping (String) -> Void = { _ in },
         cacheDirectory: URL? = nil,
-        httpClient: HTTPClient = MockHTTPClient()
+        httpClient: HTTPClient = MockHTTPClient(),
+        node: String = "/usr/local/bin/node"
     ) -> EvidenceCLI {
         EvidenceCLI(
             runner: runner,
             stdout: stdout,
             currentDirectory: directory,
-            toolPaths: ToolPaths(xcrun: "/bin/echo", magick: "/bin/echo", ffmpeg: "/bin/echo", git: "/bin/echo"),
+            toolPaths: ToolPaths(xcrun: "/bin/echo", magick: "/bin/echo", ffmpeg: "/bin/echo", git: "/bin/echo", node: node),
             httpClient: httpClient,
             cacheDirectory: cacheDirectory ?? directory.appendingPathComponent("evidence-cache", isDirectory: true)
         )
@@ -1205,24 +1321,9 @@ fileprivate final class RecordingRunner: CommandRunning {
     var xcodebuildExitCode: Int32
     /// Stub stderr returned by xcodebuild when `xcodebuildExitCode != 0`.
     var xcodebuildStderr: String
-    /// Per-baseline-path stub for `magick compare -metric AE`. The key is the
-    /// last component of the *baseline* image path (the second-to-last
-    /// argument before `output`). The value is `(exitCode, differingPixels)`.
-    /// Default behavior (no stub for a path) is "exit 0, 0 differing pixels"
-    /// so a baseline-by-baseline test only has to declare the regressions.
-    var magickCompareStubs: [String: (exitCode: Int32, differingPixels: Int, totalPixels: Int)] = [:]
-    /// Stdout returned by `git status --porcelain`. Empty by default (clean
-    /// tree), so `evidence accept-baseline` succeeds without configuration.
-    var gitStatusStdout: String = ""
-    /// Whether the runner should physically copy/write into the path passed
-    /// as the third positional argument to `magick compare`. The CLI checks
-    /// for the diff PNG's existence before emitting the markdown URL, so
-    /// tests that exercise the full path need a real file on disk.
-    var fabricateMagickCompareOutput: Bool = false
-    /// Whether the masking step (`magick <src> -fill black -draw ...`) should
-    /// produce its destination file on disk. Mirrors the production tool's
-    /// behaviour; only relevant for ignore-region tests.
-    var fabricateMagickMaskOutput: Bool = false
+    /// When true, a node invocation fabricates a dummy PNG at the last argument
+    /// (the output path) so downstream fileExists checks pass.
+    var createFilesForNode: Bool
 
     init(
         createScreenshotForSimctl: Bool = false,
@@ -1230,7 +1331,8 @@ fileprivate final class RecordingRunner: CommandRunning {
         fabricateXcresultBundle: Bool = false,
         xcresulttoolSummaryStdout: String? = nil,
         xcodebuildExitCode: Int32 = 0,
-        xcodebuildStderr: String = ""
+        xcodebuildStderr: String = "",
+        createFilesForNode: Bool = false
     ) {
         self.createScreenshotForSimctl = createScreenshotForSimctl
         self.gitRemote = gitRemote
@@ -1238,6 +1340,7 @@ fileprivate final class RecordingRunner: CommandRunning {
         self.xcresulttoolSummaryStdout = xcresulttoolSummaryStdout
         self.xcodebuildExitCode = xcodebuildExitCode
         self.xcodebuildStderr = xcodebuildStderr
+        self.createFilesForNode = createFilesForNode
     }
 
     func run(_ executable: String, _ arguments: [String]) throws -> CommandResult {
@@ -1246,6 +1349,16 @@ fileprivate final class RecordingRunner: CommandRunning {
         if createScreenshotForSimctl, arguments.starts(with: ["simctl", "io"]) {
             let outputPath = arguments[4]
             try Data("png".utf8).write(to: URL(fileURLWithPath: outputPath))
+        }
+
+        // node <script.js> <url> <viewportSpec> <fullPage> <waitUntil> <outputPath>
+        // Detected by the first argument ending in ".js". Fabricate a dummy
+        // file at the output path (last argument) so the fileExists check passes.
+        if createFilesForNode, arguments.first?.hasSuffix(".js") == true,
+           let outputPath = arguments.last, outputPath.hasSuffix(".png") {
+            let outputURL = URL(fileURLWithPath: outputPath)
+            try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("png".utf8).write(to: outputURL)
         }
 
         if arguments == ["remote", "get-url", "origin"], let gitRemote {
@@ -1274,60 +1387,6 @@ fileprivate final class RecordingRunner: CommandRunning {
 
         // `git status --porcelain`, used by `evidence accept-baseline` to
         // refuse running on a dirty tree. Default is empty (clean).
-        if arguments == ["status", "--porcelain"] {
-            return CommandResult(exitCode: 0, stdout: gitStatusStdout)
-        }
-
-        // `magick compare -metric AE [-fuzz N%] <baseline> <actual> <output>`.
-        // Stub by baseline filename so a test can express "home.png is a
-        // regression with 4200 differing pixels" without touching disk.
-        if arguments.first == "compare", arguments.count >= 3, arguments.last != nil {
-            // Layout: ["compare", "-metric", "AE", (optional "-fuzz", "N%"),
-            //          <baseline>, <actual>, <output>].
-            let baseline = arguments[arguments.count - 3]
-            let output = arguments[arguments.count - 1]
-            let key = (baseline as NSString).lastPathComponent
-            // Strip masked-suffix variant so an ignore-region run still
-            // matches the same stub key as the underlying baseline.
-            let normalizedKey = key
-                .replacingOccurrences(of: ".baseline.masked.png", with: ".png")
-            let stub = magickCompareStubs[normalizedKey]
-                ?? magickCompareStubs[key]
-                ?? (exitCode: 0, differingPixels: 0, totalPixels: 1_000_000)
-
-            if fabricateMagickCompareOutput {
-                try FileManager.default.createDirectory(
-                    at: URL(fileURLWithPath: output).deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-                try Data("png".utf8).write(to: URL(fileURLWithPath: output))
-            }
-
-            // ImageMagick prints the AE count to stderr; we also embed a
-            // `total=N` token for the parser path that wants a denominator.
-            let combined = "\(stub.differingPixels) total=\(stub.totalPixels)"
-            return CommandResult(
-                exitCode: stub.exitCode,
-                stdout: "",
-                stderr: combined
-            )
-        }
-
-        // `magick <src> -fill black -draw "rectangle ..." <dst>` for ignore
-        // regions. Optionally fabricate the destination so downstream
-        // `compare` calls find a real file.
-        if arguments.count >= 4, arguments.contains("-fill"), arguments.contains("-draw"),
-           let dst = arguments.last {
-            if fabricateMagickMaskOutput {
-                try FileManager.default.createDirectory(
-                    at: URL(fileURLWithPath: dst).deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-                try Data("png".utf8).write(to: URL(fileURLWithPath: dst))
-            }
-            return CommandResult(exitCode: 0)
-        }
-
         return CommandResult(exitCode: 0)
     }
 }

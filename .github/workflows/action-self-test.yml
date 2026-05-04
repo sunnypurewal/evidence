@@ -2,28 +2,16 @@ name: Action self-test
 
 on:
   pull_request:
-    paths:
-      - 'action.yml'
-      - 'Examples/**'
-      - 'Sources/**'
-      - 'Tests/**'
-      - 'Package.swift'
-      - '.github/workflows/action-self-test.yml'
+  merge_group:
   push:
     branches:
       - main
-    paths:
-      - 'action.yml'
-      - 'Examples/**'
-      - 'Sources/**'
-      - 'Tests/**'
-      - 'Package.swift'
-      - '.github/workflows/action-self-test.yml'
+  workflow_dispatch:
 
 jobs:
   lint-workflows:
     name: actionlint (example + repo workflows)
-    runs-on: ["self-hosted","macOS"]
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install actionlint
@@ -50,7 +38,7 @@ jobs:
 
   validate-action-manifest:
     name: Validate action.yml manifest
-    runs-on: ["self-hosted","macOS"]
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Run ActionDefinitionTests
@@ -58,7 +46,7 @@ jobs:
 
   smoke-test:
     name: Smoke-test on macOS
-    runs-on: ["self-hosted","macOS"]
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Run evidence --help via the Action

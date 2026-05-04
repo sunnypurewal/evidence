@@ -1,24 +1,24 @@
 name: 'evidence'
 description: 'Run the evidence CLI on a macOS runner to capture screenshots, build evidence, marketing renders, preview videos, visual diffs, or App Store screenshot uploads from your iOS app.'
-author: 'sunnypurewal'
+author: 'RiddimSoftware'
 branding:
   icon: 'camera'
   color: 'purple'
 
 inputs:
   subcommand:
-    description: 'evidence subcommand to run (capture-screenshots, capture-evidence, resize, render-marketing, record-preview, diff, upload-screenshots, help).'
+    description: 'evidence subcommand to run (capture-screenshots, capture-evidence, capture-web, resize, render-marketing, record-preview, diff, upload-screenshots, help).'
     required: true
+  platform:
+    description: 'Target platform. Use "ios" (default) for iOS simulator captures or "web" to capture Playwright web screenshots. When "web", Node.js 20 and the Playwright Chromium browser are installed automatically.'
+    required: false
+    default: 'ios'
   config:
     description: 'Path to the .evidence.toml config file relative to the consuming repo. Defaults to .evidence.toml in the repo root.'
     required: false
     default: '.evidence.toml'
   ticket:
     description: 'Ticket key to pass to capture-evidence (e.g. APP-123). Required when subcommand is capture-evidence.'
-    required: false
-    default: ''
-  baseline-dir:
-    description: 'Baseline directory passed to evidence diff (--baseline). Defaults to diff_baseline_dir from .evidence.toml when empty.'
     required: false
     default: ''
   output-dir:
@@ -57,11 +57,27 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        EVIDENCE_PLATFORM: ${{ inputs.platform }}
+      run: |
+        set -euo pipefail
+        case "${EVIDENCE_PLATFORM}" in
+          ios|web) ;;
+          *)
+            echo "::error::Unsupported platform '${EVIDENCE_PLATFORM}'. Accepted values: 'ios', 'web'."
+            exit 1
+            ;;
+        esac
+
     - name: Validate runner OS
       shell: bash
+      env:
+        EVIDENCE_PLATFORM: ${{ inputs.platform }}
       run: |
-        if [ "${RUNNER_OS}" != "macOS" ]; then
-          echo "::error::evidence-action requires a macOS runner (got '${RUNNER_OS}'). Use 'runs-on: macos-14' or newer."
+        if [ "${EVIDENCE_PLATFORM}" = "ios" ] && [ "${RUNNER_OS}" != "macOS" ]; then
+          echo "::error::evidence-action with platform 'ios' requires a macOS runner (got '${RUNNER_OS}'). Use 'runs-on: macos-14' or newer."
           exit 1
         fi
 
@@ -75,8 +91,38 @@ runs:
         fi
         echo "ref=${ref}" >> "$GITHUB_OUTPUT"
 
+    - name: Set up Node.js 20
+      if: ${{ inputs.platform == 'web' }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Resolve Playwright version
+      id: pw-version
+      if: ${{ inputs.platform == 'web' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        pw_version="$(npm view playwright version 2>/dev/null || echo 'unknown')"
+        echo "version=${pw_version}" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Playwright Chromium browser
+      if: ${{ inputs.platform == 'web' }}
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-chromium-${{ steps.pw-version.outputs.version }}
+
+    - name: Install Playwright Chromium
+      if: ${{ inputs.platform == 'web' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        npx playwright install chromium --with-deps
+
     - name: Cache Homebrew downloads
       id: brew-cache
+      if: ${{ inputs.platform != 'web' }}
       uses: actions/cache@v4
       with:
         # Cache the formula download tarballs and HOMEBREW_API metadata. We
@@ -91,6 +137,7 @@ runs:
         key: evidence-brew-${{ runner.os }}-${{ runner.arch }}-imagemagick-ffmpeg-v2
 
     - name: Install ImageMagick and ffmpeg
+      if: ${{ inputs.platform != 'web' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -136,6 +183,7 @@ runs:
 
     - name: Boot simulator
       id: simulator
+      if: ${{ inputs.platform != 'web' }}
       shell: bash
       env:
         DEVICE_NAME: ${{ inputs.simulator }}
@@ -172,15 +220,23 @@ runs:
       env:
         EVIDENCE_CLI: ${{ steps.build.outputs.cli }}
         EVIDENCE_SUBCOMMAND: ${{ inputs.subcommand }}
+        EVIDENCE_PLATFORM: ${{ inputs.platform }}
         EVIDENCE_CONFIG: ${{ inputs.config }}
         EVIDENCE_TICKET: ${{ inputs.ticket }}
-        EVIDENCE_BASELINE_DIR: ${{ inputs.baseline-dir }}
         EVIDENCE_OUTPUT_DIR_INPUT: ${{ inputs.output-dir }}
         EVIDENCE_EXTRA_ARGS: ${{ inputs.extra-args }}
       run: |
         set -euo pipefail
         cli="${EVIDENCE_CLI}"
         subcommand="${EVIDENCE_SUBCOMMAND}"
+        platform="${EVIDENCE_PLATFORM:-ios}"
+
+        # When platform is web, forward the subcommand to capture-web regardless
+        # of what the caller passed (the subcommand input is still honoured for
+        # other values such as "help").
+        if [ "${platform}" = "web" ] && [ "${subcommand}" != "help" ] && [ "${subcommand}" != "--help" ]; then
+          subcommand="capture-web"
+        fi
 
         if [ "${subcommand}" = "help" ] || [ "${subcommand}" = "--help" ]; then
           "${cli}" --help
@@ -206,11 +262,6 @@ runs:
               exit 1
             fi
             args+=("--ticket" "${EVIDENCE_TICKET}")
-            ;;
-          diff)
-            if [ -n "${EVIDENCE_BASELINE_DIR}" ]; then
-              args+=("--baseline" "${EVIDENCE_BASELINE_DIR}")
-            fi
             ;;
         esac
 

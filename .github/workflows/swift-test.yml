@@ -2,26 +2,16 @@ name: swift-test
 
 on:
   pull_request:
-    paths:
-      - 'Sources/**'
-      - 'Tests/**'
-      - 'Package.swift'
-      - 'Package.resolved'
-      - '.github/workflows/swift-test.yml'
+  merge_group:
   push:
     branches:
       - main
-    paths:
-      - 'Sources/**'
-      - 'Tests/**'
-      - 'Package.swift'
-      - 'Package.resolved'
-      - '.github/workflows/swift-test.yml'
+  workflow_dispatch:
 
 jobs:
   build-and-test:
     name: build-and-test
-    runs-on: ["self-hosted","macOS"]
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 

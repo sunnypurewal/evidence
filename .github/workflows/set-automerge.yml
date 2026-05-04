@@ -1,0 +1,48 @@
+# Enable auto-merge (squash) on every newly opened PR.
+#
+# Self-contained inlined version. The same file is replicated across all
+# active RiddimSoftware repos so each repo enables auto-merge independently
+# without depending on a cross-repo reusable workflow_call.
+#
+# Required org secrets (visibility=all):
+#   DEV_BOT_APP_ID
+#   DEV_BOT_PRIVATE_KEY
+
+name: Set Auto-Merge
+
+on:
+  pull_request:
+    types: [opened]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  set-automerge:
+    name: Set auto-merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ !github.event.pull_request.draft }}
+    steps:
+      - name: Generate developer-bot token
+        id: dev-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.DEV_BOT_APP_ID }}
+          private-key: ${{ secrets.DEV_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+      - name: Enable auto-merge
+        env:
+          GH_TOKEN: ${{ steps.dev-token.outputs.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          already="$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+          if [[ "$already" == "true" ]]; then
+            echo "Auto-merge already enabled for ${PR_URL}."
+            exit 0
+          fi
+          echo "Enabling auto-merge for ${PR_URL}."
+          gh pr merge --auto --squash "$PR_URL"
