@@ -699,6 +699,159 @@ final class EvidenceCLIKitTests: XCTestCase {
         )
     }
 
+    // MARK: - Platform and web config
+
+    func testConfigDefaultsPlatformToIOS() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        """)
+
+        let config = try EvidenceConfig.parse(document)
+        XCTAssertEqual(config.platform, .ios)
+        XCTAssertNil(config.webConfig)
+    }
+
+    func testConfigParsesFullValidWebConfig() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        platform = "web"
+        web_url = "https://example.com"
+        web_viewports = ["desktop-1440", "mobile-390", "1280x800"]
+        web_full_page = false
+        web_wait_until = "load"
+        """)
+
+        let config = try EvidenceConfig.parse(document)
+        XCTAssertEqual(config.platform, .web)
+        let web = try XCTUnwrap(config.webConfig)
+        XCTAssertEqual(web.url, "https://example.com")
+        XCTAssertEqual(web.viewports, ["desktop-1440", "mobile-390", "1280x800"])
+        XCTAssertEqual(web.fullPage, false)
+        XCTAssertEqual(web.waitUntil, "load")
+    }
+
+    func testWebConfigDefaultsFullPageTrueAndWaitUntilNetworkidle() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        platform = "web"
+        web_url = "https://example.com"
+        web_viewports = ["desktop-1440"]
+        """)
+
+        let config = try EvidenceConfig.parse(document)
+        let web = try XCTUnwrap(config.webConfig)
+        XCTAssertEqual(web.fullPage, true)
+        XCTAssertEqual(web.waitUntil, "networkidle")
+    }
+
+    func testWebConfigRequiresWebURLWhenPlatformIsWeb() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        platform = "web"
+        web_viewports = ["desktop-1440"]
+        """)
+
+        XCTAssertThrowsError(try EvidenceConfig.parse(document)) { error in
+            XCTAssertEqual(
+                error as? CLIError,
+                .config("Missing required field 'web_url' when platform = \"web\" in .evidence.toml.")
+            )
+        }
+    }
+
+    func testWebConfigRequiresWebViewportsWhenPlatformIsWeb() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        platform = "web"
+        web_url = "https://example.com"
+        """)
+
+        XCTAssertThrowsError(try EvidenceConfig.parse(document)) { error in
+            XCTAssertEqual(
+                error as? CLIError,
+                .config("Missing required field 'web_viewports' when platform = \"web\" in .evidence.toml.")
+            )
+        }
+    }
+
+    func testWebConfigRejectsUnknownWaitUntilValue() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        platform = "web"
+        web_url = "https://example.com"
+        web_viewports = ["desktop-1440"]
+        web_wait_until = "interactive"
+        """)
+
+        XCTAssertThrowsError(try EvidenceConfig.parse(document)) { error in
+            XCTAssertEqual(
+                error as? CLIError,
+                .config("Invalid field 'web_wait_until': unknown value 'interactive'. Accepted values: networkidle, load, domcontentloaded.")
+            )
+        }
+    }
+
+    func testWebConfigRejectsUnknownNamedViewport() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        platform = "web"
+        web_url = "https://example.com"
+        web_viewports = ["tablet-768"]
+        """)
+
+        XCTAssertThrowsError(try EvidenceConfig.parse(document)) { error in
+            guard case .config(let message) = (error as? CLIError) else {
+                return XCTFail("expected config error, got \(error)")
+            }
+            XCTAssertTrue(message.contains("tablet-768"), "error should mention the unknown viewport: \(message)")
+            XCTAssertTrue(message.contains("desktop-1440"), "error should list named presets: \(message)")
+        }
+    }
+
+    func testWebConfigAcceptsCustomWxHViewport() throws {
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        platform = "web"
+        web_url = "https://example.com"
+        web_viewports = ["1920x1080"]
+        """)
+
+        let config = try EvidenceConfig.parse(document)
+        let web = try XCTUnwrap(config.webConfig)
+        XCTAssertEqual(web.viewports, ["1920x1080"])
+    }
+
+    func testConfigDoesNotParseWebConfigWhenPlatformIsIOS() throws {
+        // web_* keys present but platform defaults to ios — should not throw
+        let document = try TOMLDocument.parse("""
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        web_url = "https://example.com"
+        web_viewports = ["desktop-1440"]
+        """)
+
+        let config = try EvidenceConfig.parse(document)
+        XCTAssertEqual(config.platform, .ios)
+        XCTAssertNil(config.webConfig)
+    }
+
     // MARK: helpers
 
     private func configuredProject(rawBaseURL: String? = nil, extraLines: [String] = []) throws -> URL {

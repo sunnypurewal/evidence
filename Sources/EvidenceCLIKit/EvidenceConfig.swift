@@ -1,5 +1,16 @@
 import Foundation
 
+/// The target platform for evidence capture.
+///
+/// Defaults to `.ios` for full backward compatibility. Set `platform = "web"`
+/// in `.evidence.toml` to enable the web capture path, which requires
+/// `web_url` and `web_viewports` and recognises the optional `web_full_page`
+/// and `web_wait_until` keys.
+public enum Platform: String, Equatable {
+    case ios = "ios"
+    case web = "web"
+}
+
 public struct EvidenceConfig: Equatable {
     public var scheme: String
     public var bundleID: String
@@ -14,6 +25,8 @@ public struct EvidenceConfig: Equatable {
     public var previewDefaults: PreviewDefaults
     public var xcresult: XcresultConfig
     public var appStoreConnect: AppStoreConnectConfig?
+    public var platform: Platform
+    public var webConfig: WebConfig?
 
     public init(
         scheme: String,
@@ -28,7 +41,9 @@ public struct EvidenceConfig: Equatable {
         xcodeProject: String? = nil,
         previewDefaults: PreviewDefaults = PreviewDefaults(),
         xcresult: XcresultConfig = XcresultConfig(),
-        appStoreConnect: AppStoreConnectConfig? = nil
+        appStoreConnect: AppStoreConnectConfig? = nil,
+        platform: Platform = .ios,
+        webConfig: WebConfig? = nil
     ) {
         self.scheme = scheme
         self.bundleID = bundleID
@@ -43,6 +58,8 @@ public struct EvidenceConfig: Equatable {
         self.previewDefaults = previewDefaults
         self.xcresult = xcresult
         self.appStoreConnect = appStoreConnect
+        self.platform = platform
+        self.webConfig = webConfig
     }
 
     public static func load(from url: URL) throws -> EvidenceConfig {
@@ -72,6 +89,26 @@ public struct EvidenceConfig: Equatable {
             throw CLIError.config("Invalid configuration: only one of 'xcode_workspace' or 'xcode_project' may be set in .evidence.toml.")
         }
 
+        // Platform parsing
+        let platformRaw = try document.optionalString("platform", allowEmpty: false)
+        let platform: Platform
+        if let raw = platformRaw {
+            guard let parsed = Platform(rawValue: raw) else {
+                throw CLIError.config("Invalid field 'platform': unknown value '\(raw)'. Accepted values: ios, web.")
+            }
+            platform = parsed
+        } else {
+            platform = .ios
+        }
+
+        // Web config (parsed only when platform == .web)
+        let webConfig: WebConfig?
+        if platform == .web {
+            webConfig = try WebConfig.parse(document)
+        } else {
+            webConfig = nil
+        }
+
         return EvidenceConfig(
             scheme: scheme,
             bundleID: bundleID,
@@ -95,8 +132,69 @@ public struct EvidenceConfig: Equatable {
                 enabled: try document.optionalBool("xcresult_enabled", default: false) ?? false,
                 keepFullBundle: try document.optionalBool("xcresult_keep_full_bundle", default: true) ?? true
             ),
-            appStoreConnect: try AppStoreConnectConfig.parse(document)
+            appStoreConnect: try AppStoreConnectConfig.parse(document),
+            platform: platform,
+            webConfig: webConfig
         )
+    }
+}
+
+/// Configuration for the web capture path (`platform = "web"`).
+///
+/// Keys are flat in `.evidence.toml` (prefixed `web_`) rather than a nested
+/// table, matching the project's intentionally line-based TOML parser.
+public struct WebConfig: Equatable {
+    /// The URL to capture. Required when `platform = "web"`.
+    public var url: String
+    /// Viewport presets or custom `WxH` strings (e.g. `"1280x800"`).
+    /// Named presets: `"desktop-1440"`, `"mobile-390"`. Required when `platform = "web"`.
+    public var viewports: [String]
+    /// When `true` (the default), capture the full page height rather than
+    /// just the visible viewport.
+    public var fullPage: Bool
+    /// The Puppeteer/Playwright wait-until event. One of `"networkidle"`,
+    /// `"load"`, `"domcontentloaded"`. Defaults to `"networkidle"`.
+    public var waitUntil: String
+
+    public static let namedViewports: Set<String> = ["desktop-1440", "mobile-390"]
+    public static let validWaitUntilValues: [String] = ["networkidle", "load", "domcontentloaded"]
+
+    public init(url: String, viewports: [String], fullPage: Bool = true, waitUntil: String = "networkidle") {
+        self.url = url
+        self.viewports = viewports
+        self.fullPage = fullPage
+        self.waitUntil = waitUntil
+    }
+
+    public static func parse(_ document: TOMLDocument) throws -> WebConfig {
+        guard let url = try document.optionalString("web_url", allowEmpty: false) else {
+            throw CLIError.config("Missing required field 'web_url' when platform = \"web\" in .evidence.toml.")
+        }
+
+        guard let viewports = try document.optionalStringArray("web_viewports", default: nil),
+              !viewports.isEmpty else {
+            throw CLIError.config("Missing required field 'web_viewports' when platform = \"web\" in .evidence.toml.")
+        }
+
+        // Validate each viewport entry
+        let customViewportPattern = #"^\d+x\d+$"#
+        for viewport in viewports {
+            if !namedViewports.contains(viewport) {
+                let isCustom = viewport.range(of: customViewportPattern, options: .regularExpression) != nil
+                if !isCustom {
+                    throw CLIError.config("Invalid field 'web_viewports': unknown viewport '\(viewport)'. Named presets: \(namedViewports.sorted().joined(separator: ", ")). Custom format: WxH (e.g. \"1280x800\").")
+                }
+            }
+        }
+
+        let fullPage = try document.optionalBool("web_full_page", default: true) ?? true
+
+        let waitUntil = try document.optionalString("web_wait_until", default: "networkidle", allowEmpty: false) ?? "networkidle"
+        if !validWaitUntilValues.contains(waitUntil) {
+            throw CLIError.config("Invalid field 'web_wait_until': unknown value '\(waitUntil)'. Accepted values: \(validWaitUntilValues.joined(separator: ", ")).")
+        }
+
+        return WebConfig(url: url, viewports: viewports, fullPage: fullPage, waitUntil: waitUntil)
     }
 }
 
