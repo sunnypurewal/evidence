@@ -876,7 +876,12 @@ final class EvidenceCLIKitTests: XCTestCase {
 
         try cli.execute(["capture-web"])
 
-        let nodeCalls = runner.commands.filter { $0.executable == "/bin/echo" }
+        // Filter to node (capture script) invocations only — identified by the
+        // first argument ending in ".js". The git remote call also uses /bin/echo
+        // in test toolPaths but should not be counted here.
+        let nodeCalls = runner.commands.filter {
+            $0.executable == "/bin/echo" && $0.arguments.first?.hasSuffix(".js") == true
+        }
         XCTAssertEqual(nodeCalls.count, 2, "expected one node invocation per viewport")
         let firstArgs = try XCTUnwrap(nodeCalls.first?.arguments)
         let secondArgs = try XCTUnwrap(nodeCalls.last?.arguments)
@@ -894,6 +899,96 @@ final class EvidenceCLIKitTests: XCTestCase {
                 return XCTFail("expected usage error, got \(error)")
             }
         }
+    }
+
+    // MARK: - capture-web PR comment
+
+    func testCaptureWebDryRunPrintsCommentBodyToStdout() throws {
+        let directory = try webProject(rawBaseURL: "https://raw.githubusercontent.com/example/app/main")
+        let runner = RecordingRunner(createFilesForNode: true)
+        var output: [String] = []
+        let cli = testCLI(directory: directory, runner: runner, stdout: { output.append($0) }, node: "/bin/echo")
+
+        try cli.execute(["capture-web"])
+
+        // Dry-run: no --comment-on-pr flag → comment body printed to stdout
+        let joined = output.joined(separator: "\n")
+        XCTAssertTrue(joined.contains("## Evidence —"), "expected Evidence heading in stdout: \(joined)")
+        XCTAssertTrue(joined.contains("### desktop-1440"), "expected desktop-1440 section: \(joined)")
+        XCTAssertTrue(joined.contains("### mobile-390"), "expected mobile-390 section: \(joined)")
+        XCTAssertTrue(joined.contains("![desktop-1440]"), "expected desktop-1440 image tag: \(joined)")
+        XCTAssertTrue(joined.contains("![mobile-390]"), "expected mobile-390 image tag: \(joined)")
+        XCTAssertTrue(joined.contains("Captured by evidence"), "expected footer line: \(joined)")
+        XCTAssertTrue(joined.contains("raw.githubusercontent.com/example/app/main"), "expected raw github URL: \(joined)")
+    }
+
+    func testCaptureWebCommentBodyContainsCorrectStructure() throws {
+        // Test comment body structure: heading, two viewport sections, footer
+        let directory = try webProject(rawBaseURL: "https://raw.githubusercontent.com/example/app/main")
+        let runner = RecordingRunner(createFilesForNode: true)
+        var output: [String] = []
+        let cli = testCLI(directory: directory, runner: runner, stdout: { output.append($0) }, node: "/bin/echo")
+
+        try cli.execute(["capture-web"])
+
+        // Filter out the "Captured X screenshot at ..." lines — isolate the comment body
+        let commentLines = output.filter { !$0.hasPrefix("Captured ") }
+        let commentBody = commentLines.joined(separator: "\n")
+
+        // Heading contains ISO 8601 date (YYYY-MM-DD)
+        let datePattern = #"\d{4}-\d{2}-\d{2}"#
+        XCTAssertTrue(
+            commentBody.range(of: datePattern, options: .regularExpression) != nil,
+            "expected ISO 8601 date in heading: \(commentBody)"
+        )
+
+        // Each viewport has its own H3 section
+        XCTAssertTrue(commentBody.contains("### desktop-1440"))
+        XCTAssertTrue(commentBody.contains("### mobile-390"))
+
+        // Image markdown uses raw GitHub URL
+        XCTAssertTrue(commentBody.contains("raw.githubusercontent.com/example/app/main"))
+        XCTAssertTrue(commentBody.contains("desktop-1440/index.png"))
+        XCTAssertTrue(commentBody.contains("mobile-390/index.png"))
+
+        // Footer
+        XCTAssertTrue(commentBody.contains("Playwright"))
+        XCTAssertTrue(commentBody.contains("Chromium headless"))
+    }
+
+    func testCaptureWebCommentOnPRWithoutTokenErrors() throws {
+        let directory = try webProject(rawBaseURL: "https://raw.githubusercontent.com/example/app/main")
+        let runner = RecordingRunner(createFilesForNode: true)
+        let cli = testCLI(directory: directory, runner: runner, node: "/bin/echo")
+
+        // Ensure GITHUB_TOKEN is not set for this test by using a custom env — we
+        // cannot unset a process env in-process, so we verify the error path by
+        // checking that the error message matches when the flag is set but the
+        // env var is absent. We synthesise this by injecting a CLI whose
+        // ProcessInfo would see no token; since we cannot control the real env
+        // safely in unit tests, we instead test that passing an explicit empty
+        // token flag also rejects (empty string is treated as missing).
+        // The real "no env var" path is covered by the integration contract.
+        XCTAssertThrowsError(
+            try cli.execute(["capture-web", "--comment-on-pr", "true", "--github-token", ""])
+        ) { error in
+            guard case .commandFailed(let message) = (error as? CLIError) else {
+                return XCTFail("expected commandFailed, got \(error)")
+            }
+            XCTAssertTrue(
+                message.contains("GitHub token"),
+                "error should mention GitHub token: \(message)"
+            )
+        }
+    }
+
+    func testExtractPRNumber() {
+        XCTAssertEqual(EvidenceCLI.extractPRNumber(from: "refs/pull/42/merge"), "42")
+        XCTAssertEqual(EvidenceCLI.extractPRNumber(from: "refs/pull/1/merge"), "1")
+        XCTAssertEqual(EvidenceCLI.extractPRNumber(from: "refs/pull/100/merge"), "100")
+        XCTAssertNil(EvidenceCLI.extractPRNumber(from: "refs/heads/main"))
+        XCTAssertNil(EvidenceCLI.extractPRNumber(from: ""))
+        XCTAssertNil(EvidenceCLI.extractPRNumber(from: "refs/pull/42/head"))
     }
 
     func testCaptureWebIntegration() throws {
@@ -1073,8 +1168,8 @@ final class EvidenceCLIKitTests: XCTestCase {
         ]
     }
 
-    private func webProject() throws -> URL {
-        try configuredProject(extraLines: [
+    private func webProject(rawBaseURL: String? = nil) throws -> URL {
+        try configuredProject(rawBaseURL: rawBaseURL, extraLines: [
             "platform = \"web\"",
             "web_url = \"http://localhost:8765\"",
             "web_viewports = [\"desktop-1440\", \"mobile-390\"]"
