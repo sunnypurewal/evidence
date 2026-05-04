@@ -991,6 +991,72 @@ final class EvidenceCLIKitTests: XCTestCase {
         XCTAssertNil(EvidenceCLI.extractPRNumber(from: "refs/pull/42/head"))
     }
 
+    func testCaptureWebCLIIntegration() throws {
+        let nodePath = "/usr/local/bin/node"
+        try XCTSkipIf(!FileManager.default.isExecutableFile(atPath: nodePath), "node not found")
+
+        let checkProc = Process()
+        checkProc.executableURL = URL(fileURLWithPath: nodePath)
+        checkProc.arguments = ["-e", "require('playwright')"]
+        checkProc.standardOutput = FileHandle.nullDevice
+        checkProc.standardError = FileHandle.nullDevice
+        try checkProc.run()
+        checkProc.waitUntilExit()
+        try XCTSkipIf(checkProc.terminationStatus != 0, "playwright not installed")
+
+        let tmpDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+
+        let htmlFile = tmpDir.appendingPathComponent("index.html")
+        try "<html><body style='height:3000px;background:blue'>hello</body></html>".write(to: htmlFile, atomically: true, encoding: .utf8)
+
+        let port = 8765
+        let server = Process()
+        server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        server.arguments = ["-m", "http.server", "\(port)", "--directory", tmpDir.path]
+        server.standardOutput = FileHandle.nullDevice
+        server.standardError = FileHandle.nullDevice
+        try server.run()
+        defer { server.terminate() }
+        Thread.sleep(forTimeInterval: 1.0)
+
+        let outDir = tmpDir.appendingPathComponent("out")
+        let toml = """
+        platform = "web"
+        web_url = "http://localhost:\(port)"
+        web_viewports = ["desktop-1440", "mobile-390"]
+        web_full_page = true
+        web_wait_until = "load"
+        evidence_dir = "\(outDir.path)"
+        scheme = "Example"
+        bundle_id = "com.example.app"
+        simulator_udid = "SIM-123"
+        """
+        try toml.write(to: tmpDir.appendingPathComponent(".evidence.toml"), atomically: true, encoding: .utf8)
+
+        let cli = EvidenceCLI(
+            runner: ProcessCommandRunner(),
+            stdout: { _ in },
+            currentDirectory: tmpDir,
+            toolPaths: ToolPaths(xcrun: "/bin/echo", magick: "/bin/echo", ffmpeg: "/bin/echo", git: "/bin/echo", node: nodePath)
+        )
+        try cli.execute(["capture-web"])
+
+        let desktop = outDir.appendingPathComponent("desktop-1440/index.png")
+        let mobile = outDir.appendingPathComponent("mobile-390/index.png")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: desktop.path), "desktop PNG not created")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: mobile.path), "mobile PNG not created")
+
+        let magic: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        let desktopData = try Data(contentsOf: desktop)
+        let mobileData = try Data(contentsOf: mobile)
+        XCTAssertGreaterThanOrEqual(desktopData.count, 8)
+        XCTAssertGreaterThanOrEqual(mobileData.count, 8)
+        XCTAssertEqual(Array(desktopData.prefix(8)).map { UInt8($0) }, magic, "desktop PNG invalid")
+        XCTAssertEqual(Array(mobileData.prefix(8)).map { UInt8($0) }, magic, "mobile PNG invalid")
+    }
+
     func testCaptureWebIntegration() throws {
         let nodePath = "/usr/local/bin/node"
         try XCTSkipIf(!FileManager.default.isExecutableFile(atPath: nodePath), "node not found")
