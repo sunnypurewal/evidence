@@ -22,7 +22,10 @@ let package = Package(
             name: "Evidence"
         ),
         .target(
-            name: "EvidenceCLIKit"
+            name: "EvidenceCLIKit",
+            resources: [
+                .copy("Resources/capture-web.js")
+            ]
         ),
         .executableTarget(
             name: "EvidenceCLI",

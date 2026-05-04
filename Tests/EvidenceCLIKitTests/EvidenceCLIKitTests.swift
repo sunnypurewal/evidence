@@ -852,6 +852,106 @@ final class EvidenceCLIKitTests: XCTestCase {
         XCTAssertNil(config.webConfig)
     }
 
+    // MARK: - capture-web
+
+    func testResolveViewportPresets() {
+        XCTAssertEqual(EvidenceCLI.resolveViewport("desktop-1440"), "1440x900")
+        XCTAssertEqual(EvidenceCLI.resolveViewport("mobile-390"), "390x844")
+        XCTAssertEqual(EvidenceCLI.resolveViewport("1280x800"), "1280x800")
+        XCTAssertEqual(EvidenceCLI.resolveViewport("custom"), "custom")
+    }
+
+    func testPageSlugDerivation() {
+        XCTAssertEqual(EvidenceCLI.pageSlug(from: "https://example.com"), "index")
+        XCTAssertEqual(EvidenceCLI.pageSlug(from: "https://example.com/"), "index")
+        XCTAssertEqual(EvidenceCLI.pageSlug(from: "https://example.com/about"), "about")
+        XCTAssertEqual(EvidenceCLI.pageSlug(from: "https://example.com/about/team"), "about-team")
+        XCTAssertEqual(EvidenceCLI.pageSlug(from: "not a url"), "index")
+    }
+
+    func testCaptureWebInvokesNodeForEachViewport() throws {
+        let directory = try webProject()
+        let runner = RecordingRunner(createFilesForNode: true)
+        let cli = testCLI(directory: directory, runner: runner, node: "/bin/echo")
+
+        try cli.execute(["capture-web"])
+
+        let nodeCalls = runner.commands.filter { $0.executable == "/bin/echo" }
+        XCTAssertEqual(nodeCalls.count, 2, "expected one node invocation per viewport")
+        let firstArgs = try XCTUnwrap(nodeCalls.first?.arguments)
+        let secondArgs = try XCTUnwrap(nodeCalls.last?.arguments)
+        XCTAssertTrue(firstArgs.contains("1440x900"), "first call should use desktop viewport spec: \(firstArgs)")
+        XCTAssertTrue(secondArgs.contains("390x844"), "second call should use mobile viewport spec: \(secondArgs)")
+    }
+
+    func testCaptureWebRejectsNonWebPlatform() throws {
+        let directory = try configuredProject()
+        let runner = RecordingRunner()
+        let cli = testCLI(directory: directory, runner: runner, node: "/bin/echo")
+
+        XCTAssertThrowsError(try cli.execute(["capture-web"])) { error in
+            guard case .usage = (error as? CLIError) else {
+                return XCTFail("expected usage error, got \(error)")
+            }
+        }
+    }
+
+    func testCaptureWebIntegration() throws {
+        let nodePath = "/usr/local/bin/node"
+        try XCTSkipIf(!FileManager.default.isExecutableFile(atPath: nodePath), "node not found")
+
+        let checkProc = Process()
+        checkProc.executableURL = URL(fileURLWithPath: nodePath)
+        checkProc.arguments = ["-e", "require('playwright')"]
+        let devNull = FileHandle.nullDevice
+        checkProc.standardOutput = devNull
+        checkProc.standardError = devNull
+        try checkProc.run()
+        checkProc.waitUntilExit()
+        try XCTSkipIf(checkProc.terminationStatus != 0, "playwright not installed")
+
+        // Locate the EvidenceCLIKit resource bundle bundled alongside the test executable.
+        let testBundleURL = Bundle(for: EvidenceCLIKitTests.self).bundleURL
+        let resourceBundleURL = testBundleURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("evidence_EvidenceCLIKit.bundle")
+        let candidateBundle = Bundle(url: resourceBundleURL)
+        guard let scriptURL = candidateBundle?.url(forResource: "capture-web", withExtension: "js") else {
+            XCTFail("capture-web.js not in bundle"); return
+        }
+
+        let tmpDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+
+        let htmlFile = tmpDir.appendingPathComponent("index.html")
+        try "<html><body style='height:3000px;background:red'>hello</body></html>".write(to: htmlFile, atomically: true, encoding: .utf8)
+
+        let port = 18765
+        let server = Process()
+        server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        server.arguments = ["-m", "http.server", "\(port)", "--directory", tmpDir.path]
+        server.standardOutput = FileHandle.nullDevice
+        server.standardError = FileHandle.nullDevice
+        try server.run()
+        defer { server.terminate() }
+        Thread.sleep(forTimeInterval: 1.0)
+
+        let outputFile = tmpDir.appendingPathComponent("out.png")
+        let capture = Process()
+        capture.executableURL = URL(fileURLWithPath: nodePath)
+        capture.arguments = [scriptURL.path, "http://localhost:\(port)/", "1440x900", "true", "networkidle", outputFile.path]
+        try capture.run()
+        capture.waitUntilExit()
+        XCTAssertEqual(capture.terminationStatus, 0, "capture-web.js exited non-zero")
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputFile.path), "PNG not created")
+        let data = try Data(contentsOf: outputFile)
+        XCTAssertGreaterThanOrEqual(data.count, 8)
+        let magic: [UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
+        XCTAssertEqual(Array(data.prefix(8)).map { UInt8($0) }, magic, "Not a valid PNG file")
+    }
+
     // MARK: helpers
 
     private func configuredProject(rawBaseURL: String? = nil, extraLines: [String] = []) throws -> URL {
@@ -973,18 +1073,27 @@ final class EvidenceCLIKitTests: XCTestCase {
         ]
     }
 
+    private func webProject() throws -> URL {
+        try configuredProject(extraLines: [
+            "platform = \"web\"",
+            "web_url = \"http://localhost:8765\"",
+            "web_viewports = [\"desktop-1440\", \"mobile-390\"]"
+        ])
+    }
+
     private func testCLI(
         directory: URL,
         runner: RecordingRunner,
         stdout: @escaping (String) -> Void = { _ in },
         cacheDirectory: URL? = nil,
-        httpClient: HTTPClient = MockHTTPClient()
+        httpClient: HTTPClient = MockHTTPClient(),
+        node: String = "/usr/local/bin/node"
     ) -> EvidenceCLI {
         EvidenceCLI(
             runner: runner,
             stdout: stdout,
             currentDirectory: directory,
-            toolPaths: ToolPaths(xcrun: "/bin/echo", magick: "/bin/echo", ffmpeg: "/bin/echo", git: "/bin/echo"),
+            toolPaths: ToolPaths(xcrun: "/bin/echo", magick: "/bin/echo", ffmpeg: "/bin/echo", git: "/bin/echo", node: node),
             httpClient: httpClient,
             cacheDirectory: cacheDirectory ?? directory.appendingPathComponent("evidence-cache", isDirectory: true)
         )
@@ -1051,6 +1160,9 @@ fileprivate final class RecordingRunner: CommandRunning {
     var xcodebuildExitCode: Int32
     /// Stub stderr returned by xcodebuild when `xcodebuildExitCode != 0`.
     var xcodebuildStderr: String
+    /// When true, a node invocation fabricates a dummy PNG at the last argument
+    /// (the output path) so downstream fileExists checks pass.
+    var createFilesForNode: Bool
 
     init(
         createScreenshotForSimctl: Bool = false,
@@ -1058,7 +1170,8 @@ fileprivate final class RecordingRunner: CommandRunning {
         fabricateXcresultBundle: Bool = false,
         xcresulttoolSummaryStdout: String? = nil,
         xcodebuildExitCode: Int32 = 0,
-        xcodebuildStderr: String = ""
+        xcodebuildStderr: String = "",
+        createFilesForNode: Bool = false
     ) {
         self.createScreenshotForSimctl = createScreenshotForSimctl
         self.gitRemote = gitRemote
@@ -1066,6 +1179,7 @@ fileprivate final class RecordingRunner: CommandRunning {
         self.xcresulttoolSummaryStdout = xcresulttoolSummaryStdout
         self.xcodebuildExitCode = xcodebuildExitCode
         self.xcodebuildStderr = xcodebuildStderr
+        self.createFilesForNode = createFilesForNode
     }
 
     func run(_ executable: String, _ arguments: [String]) throws -> CommandResult {
@@ -1074,6 +1188,16 @@ fileprivate final class RecordingRunner: CommandRunning {
         if createScreenshotForSimctl, arguments.starts(with: ["simctl", "io"]) {
             let outputPath = arguments[4]
             try Data("png".utf8).write(to: URL(fileURLWithPath: outputPath))
+        }
+
+        // node <script.js> <url> <viewportSpec> <fullPage> <waitUntil> <outputPath>
+        // Detected by the first argument ending in ".js". Fabricate a dummy
+        // file at the output path (last argument) so the fileExists check passes.
+        if createFilesForNode, arguments.first?.hasSuffix(".js") == true,
+           let outputPath = arguments.last, outputPath.hasSuffix(".png") {
+            let outputURL = URL(fileURLWithPath: outputPath)
+            try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("png".utf8).write(to: outputURL)
         }
 
         if arguments == ["remote", "get-url", "origin"], let gitRemote {
