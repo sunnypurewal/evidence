@@ -666,15 +666,40 @@ public struct ToolPaths: Equatable {
 
     public init(
         xcrun: String = "/usr/bin/xcrun",
-        magick: String = "/opt/homebrew/bin/magick",
-        ffmpeg: String = "/opt/homebrew/bin/ffmpeg",
+        magick: String? = nil,
+        ffmpeg: String? = nil,
         git: String = "/usr/bin/git",
         node: String = "/usr/local/bin/node"
     ) {
         self.xcrun = xcrun
-        self.magick = magick
-        self.ffmpeg = ffmpeg
+        self.magick = magick ?? ToolPaths.resolveBrewTool("magick")
+        self.ffmpeg = ffmpeg ?? ToolPaths.resolveBrewTool("ffmpeg")
         self.git = git
         self.node = node
+    }
+
+    /// Searches common Homebrew install prefixes then falls back to `which`
+    /// so `ToolPaths()` works on both Apple Silicon and Intel Macs without
+    /// manual path configuration.
+    static func resolveBrewTool(_ name: String) -> String {
+        let candidates = ["/opt/homebrew/bin/\(name)", "/usr/local/bin/\(name)"]
+        for path in candidates {
+            if FileManager.default.fileExists(atPath: path) {
+                return path
+            }
+        }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        p.arguments = ["which", name]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = Pipe()
+        if (try? p.run()) != nil {
+            p.waitUntilExit()
+            let found = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !found.isEmpty { return found }
+        }
+        return "/usr/local/bin/\(name)"
     }
 }
