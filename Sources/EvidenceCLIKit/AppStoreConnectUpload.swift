@@ -562,9 +562,12 @@ public struct AppStoreConnectClient {
     }
 
     private func request(_ method: String, path: String, body: Data? = nil) throws -> HTTPResponse {
-        let url = path.hasPrefix("http")
-            ? URL(string: path)!
-            : URL(string: baseURL.absoluteString + (path.hasPrefix("/") ? path : "/" + path))!
+        let urlString = path.hasPrefix("http")
+            ? path
+            : baseURL.absoluteString + (path.hasPrefix("/") ? path : "/" + path)
+        guard let url = URL(string: urlString) else {
+            throw CLIError.commandFailed("App Store Connect returned a malformed URL: \(urlString)")
+        }
         var headers = ["Authorization": "Bearer \(token)"]
         if body != nil {
             headers["Content-Type"] = "application/json"
