@@ -265,9 +265,11 @@ public enum AppStoreScreenshotDisplayType {
         "6.5": "APP_IPHONE_65",
         "6.1": "APP_IPHONE_61",
         "5.5": "APP_IPHONE_55",
-        "ipad-13": "APP_IPAD_PRO_3GEN_129",
         "ipad-12.9": "APP_IPAD_PRO_3GEN_129",
         "ipad-11": "APP_IPAD_PRO_3GEN_11"
+        // ipad-13 absent: Apple's API has no distinct ScreenshotDisplayType for
+        // 2064×2752 as of 2025 — APP_IPAD_PRO_3GEN_129 only accepts 2048×2732.
+        // Re-add when Apple documents a dedicated constant (see DEL-50).
     ]
 }
 

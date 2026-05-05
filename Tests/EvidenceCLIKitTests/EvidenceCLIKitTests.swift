@@ -24,7 +24,7 @@ final class EvidenceCLIKitTests: XCTestCase {
         bundle_id = "com.example.app"
         simulator_udid = "SIM-123"
         evidence_dir = "docs/proof"
-        screenshot_targets = ["6.9", "5.5", "ipad-13"]
+        screenshot_targets = ["6.9", "5.5", "ipad-12.9"]
         preview_targets = ["app-preview"]
         device_matrix = ["iPhone 16 Pro Max", "iPad Pro 13-inch"]
         repository_raw_base_url = "https://raw.githubusercontent.com/example/app/main"
@@ -40,7 +40,7 @@ final class EvidenceCLIKitTests: XCTestCase {
         XCTAssertEqual(config.bundleID, "com.example.app")
         XCTAssertEqual(config.simulatorUDID, "SIM-123")
         XCTAssertEqual(config.evidenceDirectory, "docs/proof")
-        XCTAssertEqual(config.screenshotTargets.map(\.name), ["6.9", "5.5", "ipad-13"])
+        XCTAssertEqual(config.screenshotTargets.map(\.name), ["6.9", "5.5", "ipad-12.9"])
         XCTAssertEqual(config.deviceMatrix, ["iPhone 16 Pro Max", "iPad Pro 13-inch"])
         XCTAssertEqual(config.previewDefaults, PreviewDefaults(width: 886, height: 1920, fps: 30, maxDuration: 28))
     }
@@ -344,6 +344,17 @@ final class EvidenceCLIKitTests: XCTestCase {
 
     func testUploadScreenshotsMapsIPadElevenToAppStoreDisplayType() throws {
         XCTAssertEqual(AppStoreScreenshotDisplayType.targetMap["ipad-11"], "APP_IPAD_PRO_3GEN_11")
+    }
+
+    func testUploadScreenshotsIPadTwelveNineAndThirteenMapToDistinctDisplayTypes() throws {
+        // ipad-13 has no dedicated ScreenshotDisplayType in Apple's API as of 2025;
+        // it is absent from targetMap. ipad-12.9 maps to the verified APP_IPAD_PRO_3GEN_129.
+        XCTAssertEqual(AppStoreScreenshotDisplayType.targetMap["ipad-12.9"], "APP_IPAD_PRO_3GEN_129")
+        XCTAssertNil(AppStoreScreenshotDisplayType.targetMap["ipad-13"])
+        XCTAssertNotEqual(
+            AppStoreScreenshotDisplayType.targetMap["ipad-13"],
+            AppStoreScreenshotDisplayType.targetMap["ipad-12.9"]
+        )
     }
 
     func testUploadScreenshotsFiltersLocaleLayout() throws {
