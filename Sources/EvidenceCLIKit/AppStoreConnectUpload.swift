@@ -266,7 +266,7 @@ public enum AppStoreScreenshotDisplayType {
         "6.1": "APP_IPHONE_61",
         "5.5": "APP_IPHONE_55",
         "ipad-13": "APP_IPAD_PRO_3GEN_129",
-        "ipad-12.9": "APP_IPAD_PRO_3GEN_129",
+        "ipad-12.9": "APP_IPAD_PRO_129",
         "ipad-11": "APP_IPAD_PRO_3GEN_11"
     ]
 }

@@ -346,6 +346,15 @@ final class EvidenceCLIKitTests: XCTestCase {
         XCTAssertEqual(AppStoreScreenshotDisplayType.targetMap["ipad-11"], "APP_IPAD_PRO_3GEN_11")
     }
 
+    func testUploadScreenshotsIPadThirteenAndTwelveNineMapToDistinctDisplayTypes() throws {
+        XCTAssertEqual(AppStoreScreenshotDisplayType.targetMap["ipad-13"], "APP_IPAD_PRO_3GEN_129")
+        XCTAssertEqual(AppStoreScreenshotDisplayType.targetMap["ipad-12.9"], "APP_IPAD_PRO_129")
+        XCTAssertNotEqual(
+            AppStoreScreenshotDisplayType.targetMap["ipad-13"],
+            AppStoreScreenshotDisplayType.targetMap["ipad-12.9"]
+        )
+    }
+
     func testUploadScreenshotsFiltersLocaleLayout() throws {
         let directory = try appStoreProject()
         _ = try writeAppStorePNG(in: directory, path: "docs/build-evidence/en-US/6.9/01-home.png", width: 1290, height: 2796)
