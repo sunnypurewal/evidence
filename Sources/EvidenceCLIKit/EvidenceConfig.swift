@@ -290,8 +290,9 @@ public struct ScreenshotTarget: Equatable {
         ScreenshotTarget(name: "6.5", width: 1242, height: 2688),
         ScreenshotTarget(name: "6.1", width: 1179, height: 2556),
         ScreenshotTarget(name: "5.5", width: 1242, height: 2208),
-        ScreenshotTarget(name: "ipad-13", width: 2064, height: 2752),
         ScreenshotTarget(name: "ipad-12.9", width: 2048, height: 2732),
+        // ipad-13 (2064×2752) omitted: App Store Connect API has no distinct
+        // ScreenshotDisplayType for this size as of 2025. Re-add with DEL-50 follow-up.
         ScreenshotTarget(name: "ipad-11", width: 1668, height: 2388)
     ]
 
