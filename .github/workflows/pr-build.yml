@@ -1,4 +1,4 @@
-name: PR Build
+name: pr-build
 
 on:
   pull_request:
@@ -10,4 +10,14 @@ permissions:
 
 jobs:
   pr-build:
-    uses: RiddimSoftware/riddim-release/.github/workflows/swift-package-build.yml@main
+    name: pr-build
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: swift build 2>&1 | tee /tmp/swift-build.log; exit "${PIPESTATUS[0]}"
+
+      - name: Test
+        run: swift test 2>&1 | tee /tmp/swift-test.log; exit "${PIPESTATUS[0]}"
