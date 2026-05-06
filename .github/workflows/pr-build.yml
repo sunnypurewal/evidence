@@ -1,18 +1,13 @@
-name: CI
+name: PR Build
+
 on:
   pull_request:
     branches: [main]
+  merge_group:
+
 permissions:
   contents: read
+
 jobs:
-  build:
+  pr-build:
     uses: RiddimSoftware/riddim-release/.github/workflows/swift-package-build.yml@main
-  success:
-    needs: [build]
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - run: |
-          if [ "${{ needs.build.result }}" != "success" ]; then
-            exit 1
-          fi
