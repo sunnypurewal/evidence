@@ -22,7 +22,7 @@ permissions:
 jobs:
   set-automerge:
     name: Set auto-merge
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 5
     if: ${{ !github.event.pull_request.draft }}
     steps:
