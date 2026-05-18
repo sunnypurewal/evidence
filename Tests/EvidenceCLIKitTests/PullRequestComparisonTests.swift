@@ -323,6 +323,18 @@ final class PullRequestComparisonTests: XCTestCase {
             }
             XCTAssertTrue(message.contains("Git command failed while creating worktree"))
         }
+
+        let reportURL = output.appendingPathComponent("report.md")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: reportURL.path))
+        let report = try String(contentsOf: reportURL, encoding: .utf8)
+        XCTAssertTrue(report.contains("[#22 Resolve visual evidence](https://github.com/RiddimSoftware/epac/pull/479)"))
+        XCTAssertTrue(report.contains("- PR title: Resolve visual evidence"))
+        XCTAssertTrue(report.contains("- PR URL: https://github.com/RiddimSoftware/epac/pull/479"))
+        XCTAssertTrue(report.contains("- Before SHA: `\(baseSHA)`"))
+        XCTAssertTrue(report.contains("- After SHA: `\(headSHA)`"))
+        XCTAssertTrue(report.contains("- Runner mode: `simctl`"))
+        XCTAssertTrue(report.contains("- Simulator: `SIM-PR`"))
+        XCTAssertTrue(report.contains("Git command failed while creating worktree"))
     }
 
     private func testCLI(directory: URL, runner: PRComparisonRunner) -> EvidenceCLI {

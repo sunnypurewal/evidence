@@ -107,6 +107,12 @@ public struct PullRequestEvidenceReportOnlyFailure: Equatable {
     public var repo: String
     public var pr: Int
     public var planPath: String
+    public var prURL: String?
+    public var prTitle: String?
+    public var beforeSHA: String?
+    public var afterSHA: String?
+    public var runnerMode: RunnerCapability?
+    public var simulator: PRChangeEvidenceSimulator?
     public var command: [String]
     public var startedAt: String
     public var completedAt: String
@@ -116,6 +122,12 @@ public struct PullRequestEvidenceReportOnlyFailure: Equatable {
         repo: String,
         pr: Int,
         planPath: String,
+        prURL: String? = nil,
+        prTitle: String? = nil,
+        beforeSHA: String? = nil,
+        afterSHA: String? = nil,
+        runnerMode: RunnerCapability? = nil,
+        simulator: PRChangeEvidenceSimulator? = nil,
         command: [String],
         startedAt: String,
         completedAt: String,
@@ -124,6 +136,12 @@ public struct PullRequestEvidenceReportOnlyFailure: Equatable {
         self.repo = repo
         self.pr = pr
         self.planPath = planPath
+        self.prURL = prURL
+        self.prTitle = prTitle
+        self.beforeSHA = beforeSHA
+        self.afterSHA = afterSHA
+        self.runnerMode = runnerMode
+        self.simulator = simulator
         self.command = command
         self.startedAt = startedAt
         self.completedAt = completedAt
@@ -260,13 +278,35 @@ public struct RenderPullRequestEvidenceReport: PullRequestEvidenceReporting {
         lines.append("")
         lines.append("## Summary")
         lines.append("- Repository: `\(failure.repo)`")
-        lines.append("- Pull request: #\(failure.pr)")
-        lines.append("- PR title: unavailable")
-        lines.append("- PR URL: unavailable")
-        lines.append("- Before SHA: unavailable")
-        lines.append("- After SHA: unavailable")
-        lines.append("- Runner mode: unavailable")
-        lines.append("- Simulator: unavailable")
+        if let url = failure.prURL?.nonEmpty {
+            let title = failure.prTitle?.nonEmpty.map { " \($0)" } ?? ""
+            lines.append("- Pull request: [#\(failure.pr)\(title)](\(url))")
+        } else {
+            let title = failure.prTitle?.nonEmpty.map { " \($0)" } ?? ""
+            lines.append("- Pull request: #\(failure.pr)\(title)")
+        }
+        if let title = failure.prTitle?.nonEmpty {
+            lines.append("- PR title: \(title)")
+        } else {
+            lines.append("- PR title: unavailable")
+        }
+        lines.append("- PR URL: \(failure.prURL?.nonEmpty ?? "unavailable")")
+        if let beforeSHA = failure.beforeSHA?.nonEmpty {
+            lines.append("- Before SHA: `\(beforeSHA)`")
+        } else {
+            lines.append("- Before SHA: unavailable")
+        }
+        if let afterSHA = failure.afterSHA?.nonEmpty {
+            lines.append("- After SHA: `\(afterSHA)`")
+        } else {
+            lines.append("- After SHA: unavailable")
+        }
+        if let runnerMode = failure.runnerMode {
+            lines.append("- Runner mode: `\(runnerMode.rawValue)`")
+        } else {
+            lines.append("- Runner mode: unavailable")
+        }
+        lines.append("- Simulator: \(simulatorDescription(failure.simulator))")
         lines.append("- Command: `\(failure.command.joined(separator: " "))`")
         lines.append("- Started: `\(failure.startedAt)`")
         lines.append("- Completed: `\(failure.completedAt)`")

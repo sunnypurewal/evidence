@@ -235,6 +235,7 @@ public struct CapturePullRequestEvidence {
     public func execute(_ input: CapturePullRequestEvidenceInput) throws -> PRChangeEvidenceManifest {
         try fileManager.createDirectory(at: input.outputDirectory, withIntermediateDirectories: true)
         let plan = try loadPlan(from: input.planURL)
+        let startedAt = ISO8601DateFormatter().string(from: clock.now())
 
         let resolution = try resolver.execute(
             repo: input.repo,
@@ -242,11 +243,36 @@ public struct CapturePullRequestEvidence {
             beforeRef: input.beforeRef,
             afterRef: input.afterRef
         )
-        let worktrees = try worktreePreparer.execute(
-            selection: resolution.selection,
-            outputDirectory: input.outputDirectory
-        )
-        let timestamp = ISO8601DateFormatter().string(from: clock.now())
+        let worktrees: [ComparisonWorktree]
+        do {
+            worktrees = try worktreePreparer.execute(
+                selection: resolution.selection,
+                outputDirectory: input.outputDirectory
+            )
+        } catch {
+            _ = try reporter?.writeReportOnlyFailure(
+                PullRequestEvidenceReportOnlyFailure(
+                    repo: input.repo,
+                    pr: input.pr,
+                    planPath: input.planPath,
+                    prURL: resolution.metadata.url,
+                    prTitle: resolution.metadata.title,
+                    beforeSHA: resolution.selection.beforeSHA,
+                    afterSHA: resolution.selection.afterSHA,
+                    runnerMode: plan.runner,
+                    simulator: PRChangeEvidenceSimulator(
+                        name: plan.ios?.simulator,
+                        udid: plan.ios?.simulatorUDID
+                    ),
+                    command: manifestCommand(for: input),
+                    startedAt: startedAt,
+                    completedAt: ISO8601DateFormatter().string(from: clock.now()),
+                    errorMessage: (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                ),
+                outputDirectory: input.outputDirectory
+            )
+            throw error
+        }
         let iosSettings = plan.platform == .ios ? plan.ios : nil
         var revisionBuilds: [RevisionBuildResult] = []
         var simulator: PRChangeEvidenceSimulator?
@@ -384,8 +410,8 @@ public struct CapturePullRequestEvidence {
             revisionBuilds: revisionBuilds,
             artifacts: artifacts,
             stepResults: stepResults,
-            startedAt: timestamp,
-            completedAt: timestamp,
+            startedAt: startedAt,
+            completedAt: ISO8601DateFormatter().string(from: clock.now()),
             failures: failures,
             worktrees: worktrees
         )
