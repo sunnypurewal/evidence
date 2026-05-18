@@ -304,6 +304,14 @@ public enum CapturePREvidenceRuntime {
             worktreePreparer: PrepareComparisonWorktrees(git: git),
             revisionBuilder: revisionBuilder,
             planExecutor: planExecutor,
+            reporter: RenderPullRequestEvidenceReport(
+                comparisonRenderer: ImageMagickComparisonRenderer(
+                    fileManager: fileManager,
+                    runner: runner,
+                    toolPaths: toolPaths
+                ),
+                fileManager: fileManager
+            ),
             fileManager: fileManager,
             clock: clock
         )

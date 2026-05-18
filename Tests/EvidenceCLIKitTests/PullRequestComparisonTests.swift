@@ -178,6 +178,12 @@ final class PullRequestComparisonTests: XCTestCase {
 
         XCTAssertTrue(runner.commands.isEmpty, "capture-pr should validate the requested plan before running gh or git commands")
         XCTAssertFalse(FileManager.default.fileExists(atPath: output.appendingPathComponent("manifest.json").path))
+
+        let report = output.appendingPathComponent("report.md")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: report.path), "capture-pr should write a report-only failure report even when the plan is missing")
+        let reportMarkdown = try String(contentsOf: report, encoding: .utf8)
+        XCTAssertTrue(reportMarkdown.contains("### Report-Only Partial Output"))
+        XCTAssertTrue(reportMarkdown.contains("Missing PR change evidence plan"))
     }
 
     func testCapturePRSurfacesMissingExplicitRefSeparately() throws {

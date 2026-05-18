@@ -207,6 +207,7 @@ public struct CapturePullRequestEvidence {
     public var revisionBuilder: BuildRevisionForEvidence?
     public var simulatorPreparer: PrepareSimulatorForEvidenceRun?
     public var planExecutor: EvidencePlanExecuting?
+    public var reporter: (any PullRequestEvidenceReporting)?
     public var fileManager: FileManager
     public var clock: any EvidenceClock
 
@@ -216,6 +217,7 @@ public struct CapturePullRequestEvidence {
         revisionBuilder: BuildRevisionForEvidence? = nil,
         simulatorPreparer: PrepareSimulatorForEvidenceRun? = nil,
         planExecutor: EvidencePlanExecuting? = nil,
+        reporter: (any PullRequestEvidenceReporting)? = nil,
         fileManager: FileManager = .default,
         clock: any EvidenceClock = SystemEvidenceClock()
     ) {
@@ -224,6 +226,7 @@ public struct CapturePullRequestEvidence {
         self.revisionBuilder = revisionBuilder
         self.simulatorPreparer = simulatorPreparer
         self.planExecutor = planExecutor
+        self.reporter = reporter
         self.fileManager = fileManager
         self.clock = clock
     }
@@ -392,6 +395,11 @@ public struct CapturePullRequestEvidence {
         try encoder.encode(manifest).write(
             to: input.outputDirectory.appendingPathComponent("manifest.json"),
             options: [.atomic]
+        )
+        try reporter?.writeReport(
+            manifest: manifest,
+            plan: plan,
+            outputDirectory: input.outputDirectory
         )
         if let terminalError {
             throw terminalError
