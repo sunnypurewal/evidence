@@ -145,10 +145,7 @@ public enum EvidencePlanRunner {
                 }
                 try NavigationAction.swipe(direction: direction).perform(in: app)
             case .startVideo, .stopVideo:
-                throw unsupported(
-                    step,
-                    reason: "Video recording steps are handled by CLI orchestration, not the app-side XCTest runner."
-                )
+                continue
             }
         }
 

@@ -616,13 +616,28 @@ public struct CapturedArtifact: Codable, Equatable {
     public var phase: PRChangeEvidencePhase?
     public var path: String
     public var stepName: String?
+    public var mediaType: String?
+    public var fileSize: Int64?
+    public var capturedAt: String?
     public var sha256: String?
 
-    public init(kind: Kind, phase: PRChangeEvidencePhase? = nil, path: String, stepName: String? = nil, sha256: String? = nil) {
+    public init(
+        kind: Kind,
+        phase: PRChangeEvidencePhase? = nil,
+        path: String,
+        stepName: String? = nil,
+        mediaType: String? = nil,
+        fileSize: Int64? = nil,
+        capturedAt: String? = nil,
+        sha256: String? = nil
+    ) {
         self.kind = kind
         self.phase = phase
         self.path = path
         self.stepName = stepName
+        self.mediaType = mediaType
+        self.fileSize = fileSize
+        self.capturedAt = capturedAt
         self.sha256 = sha256
     }
 
@@ -631,7 +646,58 @@ public struct CapturedArtifact: Codable, Equatable {
         case phase
         case path
         case stepName = "step_name"
+        case mediaType = "media_type"
+        case fileSize = "file_size"
+        case capturedAt = "captured_at"
         case sha256
+    }
+}
+
+public struct CaptureStepResult: Codable, Equatable {
+    public enum Status: String, Codable, Equatable {
+        case succeeded
+        case failed
+        case skipped
+    }
+
+    public var phase: PRChangeEvidencePhase
+    public var stepName: String
+    public var kind: PRChangeEvidenceStep.Kind
+    public var status: Status
+    public var artifactPath: String?
+    public var message: String?
+    public var startedAt: String
+    public var completedAt: String
+
+    public init(
+        phase: PRChangeEvidencePhase,
+        stepName: String,
+        kind: PRChangeEvidenceStep.Kind,
+        status: Status,
+        artifactPath: String? = nil,
+        message: String? = nil,
+        startedAt: String,
+        completedAt: String
+    ) {
+        self.phase = phase
+        self.stepName = stepName
+        self.kind = kind
+        self.status = status
+        self.artifactPath = artifactPath
+        self.message = message
+        self.startedAt = startedAt
+        self.completedAt = completedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case phase
+        case stepName = "step_name"
+        case kind
+        case status
+        case artifactPath = "artifact_path"
+        case message
+        case startedAt = "started_at"
+        case completedAt = "completed_at"
     }
 }
 
@@ -674,6 +740,7 @@ public struct PRChangeEvidenceManifest: Codable, Equatable {
     public var buildResult: PRChangeEvidenceBuildResult
     public var revisionBuilds: [RevisionBuildResult]
     public var artifacts: [CapturedArtifact]
+    public var stepResults: [CaptureStepResult]
     public var startedAt: String
     public var completedAt: String?
     public var failures: [PRChangeEvidenceFailureSummary]
@@ -699,6 +766,7 @@ public struct PRChangeEvidenceManifest: Codable, Equatable {
         buildResult: PRChangeEvidenceBuildResult,
         revisionBuilds: [RevisionBuildResult] = [],
         artifacts: [CapturedArtifact],
+        stepResults: [CaptureStepResult] = [],
         startedAt: String,
         completedAt: String? = nil,
         failures: [PRChangeEvidenceFailureSummary] = [],
@@ -723,6 +791,7 @@ public struct PRChangeEvidenceManifest: Codable, Equatable {
         self.buildResult = buildResult
         self.revisionBuilds = revisionBuilds
         self.artifacts = artifacts
+        self.stepResults = stepResults
         self.startedAt = startedAt
         self.completedAt = completedAt
         self.failures = failures
@@ -749,6 +818,7 @@ public struct PRChangeEvidenceManifest: Codable, Equatable {
         case buildResult = "build_result"
         case revisionBuilds = "revision_builds"
         case artifacts
+        case stepResults = "step_results"
         case startedAt = "started_at"
         case completedAt = "completed_at"
         case failures

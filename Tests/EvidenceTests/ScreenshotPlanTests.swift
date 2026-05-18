@@ -307,6 +307,33 @@ final class ScreenshotPlanTests: XCTestCase {
         }
     }
 
+    func testEvidencePlanRunnerSkipsVideoStepsHandledByCLIOrchestration() throws {
+        let outputDirectory = temporaryDirectory()
+        let planURL = try writePlan("""
+        {
+          "repo": "ExampleOrg/ExampleApp",
+          "pr": 479,
+          "runner": "xctest",
+          "steps": [
+            { "name": "launch", "kind": "launch" },
+            { "name": "start video", "kind": "startVideo", "path": "flow.mov" },
+            { "name": "capture home", "kind": "screenshot", "path": "home.png" },
+            { "name": "stop video", "kind": "stopVideo", "path": "flow.mov" }
+          ]
+        }
+        """)
+        let app = MockApplication()
+
+        let captures = try EvidencePlanRunner.run(
+            planPath: planURL.path,
+            on: app,
+            environment: ["EVIDENCE_OUTPUT_DIR": outputDirectory.path]
+        )
+
+        XCTAssertEqual(app.events, [.launched, .capturedScreenshot])
+        XCTAssertEqual(captures.map(\.stepName), ["capture home"])
+    }
+
     func testEvidencePlanRunsFromEnvironmentPlanPath() throws {
         let outputDirectory = temporaryDirectory()
         let planURL = try writePlan("""

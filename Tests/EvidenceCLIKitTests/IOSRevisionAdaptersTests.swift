@@ -3,6 +3,230 @@ import Foundation
 import XCTest
 
 final class IOSRevisionAdaptersTests: XCTestCase {
+    func testCapturePRRunsXCTestPlanForBeforeAndAfterWithRevisionEnvironment() throws {
+        let directory = try temporaryDirectory()
+        let output = directory.appendingPathComponent("proof/pr-50", isDirectory: true)
+        let planURL = try writePlan(in: directory, runner: .xctest, steps: [
+            """
+            { "name": "launch app", "kind": "launch" }
+            """,
+            """
+            { "name": "capture home", "kind": "screenshot", "path": "home.png" }
+            """
+        ])
+        let beforeSHA = "1010101010101010101010101010101010101010"
+        let afterSHA = "2020202020202020202020202020202020202020"
+        let runner = IOSWorkflowRunner(
+            ghJSON: Self.pullRequestJSON(baseSHA: beforeSHA, headSHA: afterSHA),
+            resolvedRefs: [
+                "\(beforeSHA)^{commit}": beforeSHA,
+                "\(afterSHA)^{commit}": afterSHA
+            ],
+            createXCTestScreenshots: true
+        )
+        let cli = testCLI(directory: directory, runner: runner)
+
+        try cli.execute([
+            "capture-pr",
+            "--repo", "RiddimSoftware/example",
+            "--pr", "50",
+            "--plan", planURL.path,
+            "--output", output.path
+        ])
+
+        let testCommands = runner.commands.filter {
+            $0.executable == "/usr/bin/xcrun" && $0.arguments.starts(with: ["xcodebuild", "test"])
+        }
+        XCTAssertEqual(testCommands.count, 2)
+        XCTAssertEqual(testCommands[0].environment["EVIDENCE_PLAN_PATH"], planURL.path)
+        XCTAssertEqual(testCommands[0].environment["EVIDENCE_OUTPUT_DIR"], output.appendingPathComponent("before", isDirectory: true).path)
+        XCTAssertEqual(testCommands[0].environment["EVIDENCE_REVISION_ROLE"], "before")
+        XCTAssertEqual(testCommands[1].environment["EVIDENCE_PLAN_PATH"], planURL.path)
+        XCTAssertEqual(testCommands[1].environment["EVIDENCE_OUTPUT_DIR"], output.appendingPathComponent("after", isDirectory: true).path)
+        XCTAssertEqual(testCommands[1].environment["EVIDENCE_REVISION_ROLE"], "after")
+        XCTAssertEqual(testCommands.map(\.workingDirectory), [
+            output.appendingPathComponent("worktrees/before-\(String(beforeSHA.prefix(12)))").path,
+            output.appendingPathComponent("worktrees/after-\(String(afterSHA.prefix(12)))").path
+        ])
+
+        let manifest = try decodeManifest(at: output)
+        let screenshotArtifacts = manifest.artifacts.filter { $0.kind == .screenshot }
+        XCTAssertEqual(screenshotArtifacts.map(\.phase), [.before, .after])
+        XCTAssertEqual(screenshotArtifacts.map(\.stepName), ["capture home", "capture home"])
+        XCTAssertEqual(screenshotArtifacts.map(\.path), [
+            output.appendingPathComponent("before/home.png").path,
+            output.appendingPathComponent("after/home.png").path
+        ])
+        XCTAssertEqual(screenshotArtifacts.map(\.mediaType), ["image/png", "image/png"])
+        XCTAssertEqual(screenshotArtifacts.map(\.fileSize), [3, 3])
+        XCTAssertEqual(manifest.stepResults.filter { $0.kind == .screenshot }.map(\.stepName), [
+            "capture home", "capture home"
+        ])
+    }
+
+    func testCapturePRRunsLaunchOnlySimctlFlowAndRecordsScreenshotArtifacts() throws {
+        let directory = try temporaryDirectory()
+        let output = directory.appendingPathComponent("proof/pr-51", isDirectory: true)
+        let planURL = try writePlan(in: directory, steps: [
+            """
+            { "name": "launch app", "kind": "launch" }
+            """,
+            """
+            { "name": "settle", "kind": "wait", "seconds": 0 }
+            """,
+            """
+            { "name": "capture home", "kind": "screenshot", "path": "home.png" }
+            """
+        ])
+        let beforeSHA = "3030303030303030303030303030303030303030"
+        let afterSHA = "4040404040404040404040404040404040404040"
+        let runner = IOSWorkflowRunner(
+            ghJSON: Self.pullRequestJSON(baseSHA: beforeSHA, headSHA: afterSHA),
+            resolvedRefs: [
+                "\(beforeSHA)^{commit}": beforeSHA,
+                "\(afterSHA)^{commit}": afterSHA
+            ],
+            createSimctlScreenshots: true
+        )
+        let cli = testCLI(directory: directory, runner: runner)
+
+        try cli.execute([
+            "capture-pr",
+            "--repo", "RiddimSoftware/example",
+            "--pr", "51",
+            "--plan", planURL.path,
+            "--output", output.path
+        ])
+
+        let screenshotCommands = runner.commands.filter {
+            $0.executable == "/usr/bin/xcrun" && $0.arguments.starts(with: ["simctl", "io", "SIM-123", "screenshot"])
+        }
+        XCTAssertEqual(screenshotCommands.map(\.arguments), [
+            ["simctl", "io", "SIM-123", "screenshot", output.appendingPathComponent("before/home.png").path],
+            ["simctl", "io", "SIM-123", "screenshot", output.appendingPathComponent("after/home.png").path]
+        ])
+
+        let manifest = try decodeManifest(at: output)
+        let screenshotArtifacts = manifest.artifacts.filter { $0.kind == .screenshot }
+        XCTAssertEqual(screenshotArtifacts.map(\.phase), [.before, .after])
+        XCTAssertEqual(screenshotArtifacts.map(\.stepName), ["capture home", "capture home"])
+        XCTAssertEqual(screenshotArtifacts.map(\.fileSize), [3, 3])
+        XCTAssertEqual(screenshotArtifacts.compactMap(\.capturedAt).count, 2)
+        XCTAssertEqual(manifest.stepResults.map(\.stepName), [
+            "launch app", "settle", "capture home",
+            "launch app", "settle", "capture home"
+        ])
+    }
+
+    func testCapturePRWritesPartialManifestWhenSimctlCaptureStepFails() throws {
+        let directory = try temporaryDirectory()
+        let output = directory.appendingPathComponent("proof/pr-52", isDirectory: true)
+        let planURL = try writePlan(in: directory, steps: [
+            """
+            { "name": "launch app", "kind": "launch" }
+            """,
+            """
+            { "name": "capture home", "kind": "screenshot", "path": "home.png" }
+            """
+        ])
+        let beforeSHA = "5050505050505050505050505050505050505050"
+        let afterSHA = "6060606060606060606060606060606060606060"
+        let runner = IOSWorkflowRunner(
+            ghJSON: Self.pullRequestJSON(baseSHA: beforeSHA, headSHA: afterSHA),
+            resolvedRefs: [
+                "\(beforeSHA)^{commit}": beforeSHA,
+                "\(afterSHA)^{commit}": afterSHA
+            ],
+            createSimctlScreenshots: true,
+            failingScreenshotPhase: .after
+        )
+        let cli = testCLI(directory: directory, runner: runner)
+
+        XCTAssertThrowsError(try cli.execute([
+            "capture-pr",
+            "--repo", "RiddimSoftware/example",
+            "--pr", "52",
+            "--plan", planURL.path,
+            "--output", output.path
+        ])) { error in
+            guard case .commandFailed(let message) = (error as? CLIError) else {
+                return XCTFail("expected commandFailed, got \(error)")
+            }
+            XCTAssertTrue(message.contains("after"))
+            XCTAssertTrue(message.contains("capture home"))
+        }
+
+        let manifest = try decodeManifest(at: output)
+        let screenshotArtifacts = manifest.artifacts.filter { $0.kind == .screenshot }
+        XCTAssertEqual(screenshotArtifacts.map(\.phase), [.before])
+        XCTAssertEqual(manifest.failures.first?.stepName, "capture home")
+        XCTAssertTrue(manifest.failures.first?.message.contains("after") == true)
+        XCTAssertEqual(manifest.stepResults.last?.status, .failed)
+        XCTAssertEqual(manifest.stepResults.last?.phase, .after)
+    }
+
+    func testSimctlPlanExecutorRecordsExplicitVideosForBeforeAndAfter() throws {
+        let directory = try temporaryDirectory()
+        let output = directory.appendingPathComponent("proof/pr-53", isDirectory: true)
+        let plan = PRChangeEvidencePlan(
+            repo: "RiddimSoftware/example",
+            pr: 53,
+            platform: .ios,
+            runner: .simctl,
+            ios: PRChangeEvidenceIOSSettings(
+                scheme: "Example",
+                bundleID: "com.example.app",
+                simulatorUDID: "SIM-123"
+            ),
+            steps: [
+                PRChangeEvidenceStep(name: "launch app", kind: .launch),
+                PRChangeEvidenceStep(name: "start flow", kind: .startVideo, path: "flow.mov"),
+                PRChangeEvidenceStep(name: "settle", kind: .wait, seconds: 0),
+                PRChangeEvidenceStep(name: "stop flow", kind: .stopVideo, path: "flow.mov")
+            ]
+        )
+        let simulator = FakeSimulatorController()
+        let videoRecorder = FakeVideoRecorder()
+        let executor = SimctlPlanExecutor(
+            simulator: simulator,
+            videoRecorder: videoRecorder,
+            artifactWriter: FileArtifactWriter(),
+            clock: IOSFixedEvidenceClock(date: Date(timeIntervalSince1970: 1_714_000_000))
+        )
+
+        let result = try executor.execute(EvidencePlanExecutionRequest(
+            plan: plan,
+            planURL: directory.appendingPathComponent(".evidence/pr-home.json"),
+            outputDirectory: output,
+            worktrees: [
+                ComparisonWorktree(label: .before, sha: "before", path: directory.appendingPathComponent("before-worktree").path),
+                ComparisonWorktree(label: .after, sha: "after", path: directory.appendingPathComponent("after-worktree").path)
+            ],
+            revisionBuilds: [
+                revisionBuild(.before, output: output),
+                revisionBuild(.after, output: output)
+            ],
+            ios: plan.ios!,
+            launch: plan.launch
+        ))
+
+        XCTAssertTrue(result.succeeded)
+        XCTAssertEqual(videoRecorder.startedPaths, [
+            output.appendingPathComponent("before/flow.mov").path,
+            output.appendingPathComponent("after/flow.mov").path
+        ])
+        XCTAssertEqual(videoRecorder.stoppedPaths, videoRecorder.startedPaths)
+        let videoArtifacts = result.artifacts.filter { $0.kind == .video }
+        XCTAssertEqual(videoArtifacts.map(\.phase), [.before, .after])
+        XCTAssertEqual(videoArtifacts.map(\.path), videoRecorder.startedPaths)
+        XCTAssertEqual(videoArtifacts.map(\.mediaType), ["video/quicktime", "video/quicktime"])
+        XCTAssertEqual(videoArtifacts.map(\.fileSize), [3, 3])
+        XCTAssertEqual(result.stepResults.map(\.stepName), [
+            "launch app", "start flow", "settle", "stop flow",
+            "launch app", "start flow", "settle", "stop flow"
+        ])
+    }
+
     func testCapturePRBuildsBothRevisionsWithIsolatedDerivedDataAndManifestRecords() throws {
         let directory = try temporaryDirectory()
         let output = directory.appendingPathComponent("proof/pr-44", isDirectory: true)
@@ -231,17 +455,27 @@ final class IOSRevisionAdaptersTests: XCTestCase {
 
     private func writePlan(
         in directory: URL,
-        preserveSimulatorState: Bool = false
+        runner: RunnerCapability = .simctl,
+        preserveSimulatorState: Bool = false,
+        steps: [String] = [
+            """
+            { "name": "launch", "kind": "launch" }
+            """,
+            """
+            { "name": "settle", "kind": "wait", "seconds": 0 }
+            """
+        ]
     ) throws -> URL {
         let planDirectory = directory.appendingPathComponent(".evidence", isDirectory: true)
         try FileManager.default.createDirectory(at: planDirectory, withIntermediateDirectories: true)
         let url = planDirectory.appendingPathComponent("pr-home.json")
+        let renderedSteps = steps.joined(separator: ",\n")
         let json = """
         {
           "repo": "RiddimSoftware/example",
           "pr": 44,
           "platform": "ios",
-          "runner": "simctl",
+          "runner": "\(runner.rawValue)",
           "ios": {
             "workspace": "ios/Example.xcworkspace",
             "scheme": "Example",
@@ -259,8 +493,7 @@ final class IOSRevisionAdaptersTests: XCTestCase {
             }
           },
           "steps": [
-            { "name": "launch", "kind": "launch" },
-            { "name": "settle", "kind": "wait", "seconds": 1 }
+            \(renderedSteps)
           ]
         }
         """
@@ -280,6 +513,20 @@ final class IOSRevisionAdaptersTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
+    }
+
+    private func revisionBuild(_ phase: PRChangeEvidencePhase, output: URL) -> RevisionBuildResult {
+        RevisionBuildResult(
+            phase: phase,
+            command: ["/usr/bin/xcrun", "xcodebuild", "build"],
+            exitCode: 0,
+            durationSeconds: 1,
+            stdoutExcerpt: "",
+            stderrExcerpt: "",
+            appBundlePath: output.appendingPathComponent("apps/\(phase.rawValue)/Example.app").path,
+            derivedDataPath: output.appendingPathComponent("derived-data/\(phase.rawValue)").path,
+            logPath: output.appendingPathComponent("logs/build-\(phase.rawValue).log").path
+        )
     }
 
     private static func pullRequestJSON(baseSHA: String, headSHA: String) -> String {
@@ -312,6 +559,9 @@ private final class IOSWorkflowRunner: CommandRunning {
     private let xcodebuildStderr: String
     private let xcodebuildExitCodes: [PRChangeEvidencePhase: Int32]
     private let simulatorFailureStage: IOSSimulatorFailureStage?
+    private let createXCTestScreenshots: Bool
+    private let createSimctlScreenshots: Bool
+    private let failingScreenshotPhase: PRChangeEvidencePhase?
     private(set) var commands: [Command] = []
 
     init(
@@ -320,7 +570,10 @@ private final class IOSWorkflowRunner: CommandRunning {
         xcodebuildStdout: String = "Build Succeeded",
         xcodebuildStderr: String = "",
         xcodebuildExitCodes: [PRChangeEvidencePhase: Int32] = [:],
-        simulatorFailureStage: IOSSimulatorFailureStage? = nil
+        simulatorFailureStage: IOSSimulatorFailureStage? = nil,
+        createXCTestScreenshots: Bool = false,
+        createSimctlScreenshots: Bool = false,
+        failingScreenshotPhase: PRChangeEvidencePhase? = nil
     ) {
         self.ghJSON = ghJSON
         self.resolvedRefs = resolvedRefs
@@ -328,6 +581,9 @@ private final class IOSWorkflowRunner: CommandRunning {
         self.xcodebuildStderr = xcodebuildStderr
         self.xcodebuildExitCodes = xcodebuildExitCodes
         self.simulatorFailureStage = simulatorFailureStage
+        self.createXCTestScreenshots = createXCTestScreenshots
+        self.createSimctlScreenshots = createSimctlScreenshots
+        self.failingScreenshotPhase = failingScreenshotPhase
     }
 
     func run(_ executable: String, _ arguments: [String]) throws -> CommandResult {
@@ -357,6 +613,10 @@ private final class IOSWorkflowRunner: CommandRunning {
 
         if executable == "/usr/bin/xcrun", arguments.starts(with: ["xcodebuild", "build"]) {
             return try xcodebuild(arguments)
+        }
+
+        if executable == "/usr/bin/xcrun", arguments.starts(with: ["xcodebuild", "test"]) {
+            return try xcodebuildTest(arguments, environment: environment)
         }
 
         if executable == "/usr/bin/xcrun", arguments.first == "simctl" {
@@ -405,6 +665,20 @@ private final class IOSWorkflowRunner: CommandRunning {
         )
     }
 
+    private func xcodebuildTest(
+        _ arguments: [String],
+        environment: [String: String]
+    ) throws -> CommandResult {
+        if createXCTestScreenshots,
+           let output = environment["EVIDENCE_OUTPUT_DIR"] {
+            let screenshot = URL(fileURLWithPath: output, isDirectory: true)
+                .appendingPathComponent("home.png")
+            try FileManager.default.createDirectory(at: screenshot.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("png".utf8).write(to: screenshot)
+        }
+        return CommandResult(exitCode: 0, stdout: "Test Succeeded")
+    }
+
     private func simctl(_ arguments: [String]) -> CommandResult {
         if simulatorFailureStage == .boot, arguments.starts(with: ["simctl", "boot"]) {
             return CommandResult(exitCode: 1, stderr: "boot denied")
@@ -415,7 +689,30 @@ private final class IOSWorkflowRunner: CommandRunning {
         if simulatorFailureStage == .launch, arguments.starts(with: ["simctl", "launch"]) {
             return CommandResult(exitCode: 1, stderr: "launch denied")
         }
+        if arguments.starts(with: ["simctl", "io", "SIM-123", "screenshot"]) {
+            guard let outputPath = arguments.last else {
+                return CommandResult(exitCode: 1, stderr: "missing screenshot path")
+            }
+            if failingScreenshotPhase == phase(forArtifactPath: outputPath) {
+                return CommandResult(exitCode: 1, stderr: "screenshot denied")
+            }
+            if createSimctlScreenshots {
+                let outputURL = URL(fileURLWithPath: outputPath)
+                try? FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? Data("png".utf8).write(to: outputURL)
+            }
+        }
         return CommandResult(exitCode: 0)
+    }
+
+    private func phase(forArtifactPath path: String) -> PRChangeEvidencePhase? {
+        if path.contains("/before/") {
+            return .before
+        }
+        if path.contains("/after/") {
+            return .after
+        }
+        return nil
     }
 
     private func gitCommand(_ arguments: [String]) -> [String]? {
@@ -445,5 +742,47 @@ private struct IOSFixedEvidenceClock: EvidenceClock {
 
     func now() -> Date {
         date
+    }
+}
+
+private final class FakeSimulatorController: SimulatorControlling {
+    func resolve(_ ios: PRChangeEvidenceIOSSettings) throws -> SimulatorSelection {
+        SimulatorSelection(name: ios.simulator, udid: ios.simulatorUDID ?? "SIM-123")
+    }
+
+    func boot(_ selection: SimulatorSelection) throws {}
+
+    func installAndLaunch(
+        phase: PRChangeEvidencePhase,
+        appBundle: AppBundleLocation,
+        context: SimulatorRunContext
+    ) throws {}
+
+    func screenshot(_ selection: SimulatorSelection, outputURL: URL) throws {
+        try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("png".utf8).write(to: outputURL)
+    }
+
+    func openURL(_ url: String, selection: SimulatorSelection) throws {}
+
+    func terminate(bundleID: String, selection: SimulatorSelection) throws {}
+
+    func shutdown(_ selection: SimulatorSelection) throws {}
+}
+
+private final class FakeVideoRecorder: VideoRecording {
+    private(set) var startedPaths: [String] = []
+    private(set) var stoppedPaths: [String] = []
+
+    func start(udid: String, outputURL: URL) throws -> VideoRecordingSession {
+        startedPaths.append(outputURL.path)
+        return VideoRecordingSession(udid: udid, outputPath: outputURL.path)
+    }
+
+    func stop(_ session: VideoRecordingSession) throws {
+        stoppedPaths.append(session.outputPath)
+        let url = URL(fileURLWithPath: session.outputPath)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("mov".utf8).write(to: url)
     }
 }

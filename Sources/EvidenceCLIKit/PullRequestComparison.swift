@@ -206,6 +206,7 @@ public struct CapturePullRequestEvidence {
     public var worktreePreparer: PrepareComparisonWorktrees
     public var revisionBuilder: BuildRevisionForEvidence?
     public var simulatorPreparer: PrepareSimulatorForEvidenceRun?
+    public var planExecutor: EvidencePlanExecuting?
     public var fileManager: FileManager
     public var clock: any EvidenceClock
 
@@ -214,6 +215,7 @@ public struct CapturePullRequestEvidence {
         worktreePreparer: PrepareComparisonWorktrees,
         revisionBuilder: BuildRevisionForEvidence? = nil,
         simulatorPreparer: PrepareSimulatorForEvidenceRun? = nil,
+        planExecutor: EvidencePlanExecuting? = nil,
         fileManager: FileManager = .default,
         clock: any EvidenceClock = SystemEvidenceClock()
     ) {
@@ -221,6 +223,7 @@ public struct CapturePullRequestEvidence {
         self.worktreePreparer = worktreePreparer
         self.revisionBuilder = revisionBuilder
         self.simulatorPreparer = simulatorPreparer
+        self.planExecutor = planExecutor
         self.fileManager = fileManager
         self.clock = clock
     }
@@ -255,6 +258,7 @@ public struct CapturePullRequestEvidence {
                 path: input.outputDirectory.appendingPathComponent("manifest.json").path
             )
         ]
+        var stepResults: [CaptureStepResult] = []
 
         if let ios = iosSettings, let revisionBuilder {
             for worktree in worktrees {
@@ -284,7 +288,41 @@ public struct CapturePullRequestEvidence {
                 CapturedArtifact(kind: .log, phase: $0.phase, path: $0.logPath, stepName: "\($0.phase.rawValue) build")
             } + artifacts
 
-            if terminalError == nil, let simulatorPreparer {
+            if terminalError == nil, let planExecutor {
+                do {
+                    let runResult = try planExecutor.execute(
+                        EvidencePlanExecutionRequest(
+                            plan: plan,
+                            planURL: input.planURL,
+                            outputDirectory: input.outputDirectory,
+                            worktrees: worktrees,
+                            revisionBuilds: revisionBuilds,
+                            ios: ios,
+                            launch: plan.launch
+                        )
+                    )
+                    if let runSimulator = runResult.simulator {
+                        simulator = runSimulator
+                    }
+                    artifacts = runResult.artifacts + artifacts
+                    stepResults = runResult.stepResults
+                    failures.append(contentsOf: runResult.failures)
+                    if !runResult.succeeded {
+                        let message = runResult.failures.first?.message
+                            ?? runResult.stepResults.first(where: { $0.status == .failed })?.message
+                            ?? "PR evidence plan execution failed."
+                        terminalError = CLIError.commandFailed(message)
+                    }
+                } catch let error as CLIError {
+                    let message = error.errorDescription ?? String(describing: error)
+                    failures.append(PRChangeEvidenceFailureSummary(message: message))
+                    terminalError = error
+                } catch {
+                    let message = String(describing: error)
+                    failures.append(PRChangeEvidenceFailureSummary(message: message))
+                    terminalError = CLIError.commandFailed(message)
+                }
+            } else if terminalError == nil, let simulatorPreparer {
                 do {
                     simulator = try simulatorPreparer.execute(
                         ios: ios,
@@ -342,6 +380,7 @@ public struct CapturePullRequestEvidence {
             ),
             revisionBuilds: revisionBuilds,
             artifacts: artifacts,
+            stepResults: stepResults,
             startedAt: timestamp,
             completedAt: timestamp,
             failures: failures,

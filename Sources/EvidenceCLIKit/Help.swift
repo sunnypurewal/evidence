@@ -15,7 +15,7 @@ public enum Help {
       capture-evidence      Capture a one-shot build evidence screenshot.
       upload-screenshots    Upload screenshots to App Store Connect.
       capture-web           Capture full-page Playwright screenshots at configured viewport sizes.
-      capture-pr            Prepare before/after worktrees for pull request evidence.
+      capture-pr            Run before/after pull request evidence captures.
 
     Configuration:
       Most capture commands read .evidence.toml from the current directory.
@@ -186,8 +186,8 @@ public enum Help {
     evidence capture-pr --repo <owner/repo> --pr <number> --plan <json> --output <dir> [--before-ref <ref>] [--after-ref <ref>]
 
     Resolves pull request before/after revisions, prepares two isolated Git
-    worktrees, builds both iOS revisions, installs each onto a simulator with
-    clean app container state by default, and writes a manifest:
+    worktrees, builds both iOS revisions, executes the configured Evidence plan
+    for each revision, and writes a manifest:
 
       <output>/worktrees/before-<shortsha>
       <output>/worktrees/after-<shortsha>
@@ -195,6 +195,10 @@ public enum Help {
       <output>/derived-data/after
       <output>/logs/build-before.log
       <output>/logs/build-after.log
+      <output>/before/<step>.png
+      <output>/after/<step>.png
+      <output>/before/<flow>.mov
+      <output>/after/<flow>.mov
       <output>/manifest.json
 
     Defaults:
@@ -215,6 +219,12 @@ public enum Help {
 
     Launch environment entries are injected via SIMCTL_CHILD_<KEY> variables
     for portability across local simulator versions.
+
+    Runner behavior:
+      runner = "xctest" runs xcodebuild test once for before and after with
+      EVIDENCE_PLAN_PATH, EVIDENCE_OUTPUT_DIR, and EVIDENCE_REVISION_ROLE set.
+      runner = "simctl" supports launch, wait seconds, screenshot, openURL,
+      startVideo, and stopVideo steps through simctl.
 
     Requires:
       gh

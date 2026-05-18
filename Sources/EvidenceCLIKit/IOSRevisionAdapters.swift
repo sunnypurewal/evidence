@@ -266,10 +266,25 @@ public enum CapturePREvidenceRuntime {
                 clock: clock
             )
         )
-        let simulatorPreparer = PrepareSimulatorForEvidenceRun(
-            simulator: SimctlSimulatorController(
+        let simulatorController = SimctlSimulatorController(
+            runner: runner,
+            xcrunPath: toolPaths.xcrun
+        )
+        let artifactWriter = FileArtifactWriter(fileManager: fileManager)
+        let planExecutor = DispatchingPlanExecutor(
+            xctest: XcodeTestPlanExecutor(
                 runner: runner,
-                xcrunPath: toolPaths.xcrun
+                xcrunPath: toolPaths.xcrun,
+                artifactWriter: artifactWriter,
+                fileManager: fileManager,
+                clock: clock
+            ),
+            simctl: SimctlPlanExecutor(
+                simulator: simulatorController,
+                videoRecorder: SimctlVideoRecorder(xcrunPath: toolPaths.xcrun),
+                artifactWriter: artifactWriter,
+                fileManager: fileManager,
+                clock: clock
             )
         )
         let git = GitCLIRepositoryPreparer(
@@ -287,7 +302,7 @@ public enum CapturePREvidenceRuntime {
             resolver: ResolvePullRequestComparison(metadataProvider: metadataProvider, git: git),
             worktreePreparer: PrepareComparisonWorktrees(git: git),
             revisionBuilder: revisionBuilder,
-            simulatorPreparer: simulatorPreparer,
+            planExecutor: planExecutor,
             fileManager: fileManager,
             clock: clock
         )
@@ -331,6 +346,8 @@ public protocol SimulatorControlling {
         appBundle: AppBundleLocation,
         context: SimulatorRunContext
     ) throws
+    func screenshot(_ selection: SimulatorSelection, outputURL: URL) throws
+    func openURL(_ url: String, selection: SimulatorSelection) throws
     func terminate(bundleID: String, selection: SimulatorSelection) throws
     func shutdown(_ selection: SimulatorSelection) throws
 }
@@ -426,6 +443,26 @@ public struct SimctlSimulatorController: SimulatorControlling {
         )
         guard launch.exitCode == 0 else {
             throw CLIError.commandFailed("\(phase.rawValue) launch failed for \(context.bundleID): \(detail(from: launch))")
+        }
+    }
+
+    public func screenshot(_ selection: SimulatorSelection, outputURL: URL) throws {
+        let result = try runner.run(
+            xcrunPath,
+            ["simctl", "io", selection.udid, "screenshot", outputURL.path]
+        )
+        guard result.exitCode == 0 else {
+            throw CLIError.commandFailed("simulator screenshot failed for \(selection.udid): \(detail(from: result))")
+        }
+    }
+
+    public func openURL(_ url: String, selection: SimulatorSelection) throws {
+        let result = try runner.run(
+            xcrunPath,
+            ["simctl", "openurl", selection.udid, url]
+        )
+        guard result.exitCode == 0 else {
+            throw CLIError.commandFailed("simulator openurl failed for \(selection.udid): \(detail(from: result))")
         }
     }
 

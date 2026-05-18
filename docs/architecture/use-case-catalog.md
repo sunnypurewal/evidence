@@ -128,25 +128,27 @@ Actor: `CapturePullRequestEvidence`
 Goal: Run the configured Evidence capture plan against a prepared revision and
 return normalized artifacts for comparison and reporting.
 
-Inputs: Prepared worktree, `EvidenceConfig`, capture mode, simulator/device
-destination, and artifact output directory.
+Inputs: Prepared before/after worktrees, parsed `PRChangeEvidencePlan`, built
+revision outputs, simulator/device destination, and artifact output directory.
 
-Outputs: Captured screenshots, xcresult summaries, web screenshots, command
-logs, and normalized artifact descriptors.
+Outputs: Captured screenshots, recorded videos, command logs, per-step results,
+failure summaries, and normalized artifact descriptors.
 
-Entities / values: `EvidencePlanExecution`, `EvidenceArtifact`,
-`EvidenceCaptureMode`, `EvidenceConfig`.
+Entities / values: `EvidencePlanExecutionRequest`, `EvidenceRunResult`,
+`CaptureStepResult`, `CapturedArtifact`, `PRChangeEvidencePlan`.
 
-Ports: `EvidencePlanExecuting`, `CommandRunning`, `FileSystemWriting`,
-`SimulatorCapturing`.
+Ports: `EvidencePlanExecuting`, `ArtifactWriting`, `VideoRecording`,
+`CommandRunning`, `SimulatorControlling`, `FileSystemWriting`.
 
-Primary adapters: Evidence CLI command adapter, simulator screenshot adapter,
-Playwright web capture adapter, filesystem artifact store.
+Primary adapters: `XcodeTestPlanExecutor`, `SimctlPlanExecutor`, simctl
+screenshot/openURL adapter, simctl video recorder, filesystem artifact writer.
 
-Current implementation: Existing single-revision capture commands live in
-`Sources/EvidenceCLIKit/EvidenceCLI.swift`. PR evidence orchestration should
-call through a plan-execution boundary instead of duplicating command policy in
-the `capture-pr` switch case.
+Current implementation: `Sources/EvidenceCLIKit/EvidencePlanExecution.swift`
+dispatches `runner = "xctest"` to revision-scoped `xcodebuild test` calls with
+Evidence environment values, and `runner = "simctl"` to launch/wait/screenshot
+and video steps. `CapturePullRequestEvidence` records returned artifacts and
+step results in `manifest.json`; `EvidenceCLI.swift` remains a thin command
+router.
 
 ### RenderPullRequestEvidenceReport
 
