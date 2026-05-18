@@ -11,7 +11,11 @@ public protocol EvidenceApplication {
     func waitForButton(_ label: String, timeout: TimeInterval) -> Bool
     func waitForElement(matching predicate: NSPredicate, timeout: TimeInterval) -> Bool
     func tapButton(_ label: String) throws
+    func tapElement(_ label: String) throws
+    func typeText(_ text: String, intoElement label: String) throws
+    func openURL(_ url: URL) throws
     func swipeLeft()
+    func swipe(_ direction: NavigationAction.SwipeDirection) throws
     func captureScreenshot() throws -> EvidenceScreenshot
 }
 
@@ -19,6 +23,27 @@ public extension EvidenceApplication {
     mutating func apply(_ launchHook: LaunchHook) {
         launchArguments.append(contentsOf: launchHook.launchArguments)
         launchEnvironment.merge(launchHook.launchEnvironment) { _, new in new }
+    }
+
+    func tapElement(_ label: String) throws {
+        try tapButton(label)
+    }
+
+    func typeText(_ text: String, intoElement label: String) throws {
+        throw EvidenceError.navigationFailed("Typing text into '\(label)' is not supported by this application adapter.")
+    }
+
+    func openURL(_ url: URL) throws {
+        throw EvidenceError.navigationFailed("Opening URL '\(url.absoluteString)' is not supported by this application adapter.")
+    }
+
+    func swipe(_ direction: NavigationAction.SwipeDirection) throws {
+        switch direction {
+        case .left:
+            swipeLeft()
+        case .up, .down, .right:
+            throw EvidenceError.navigationFailed("Swipe direction '\(direction.rawValue)' is not supported by this application adapter.")
+        }
     }
 }
 
@@ -61,6 +86,44 @@ extension XCUIApplication: EvidenceApplication {
             throw EvidenceError.navigationFailed("Button '\(label)' was not found.")
         }
         button.tap()
+    }
+
+    public func tapElement(_ label: String) throws {
+        let element = descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", label))
+            .firstMatch
+        guard element.exists else {
+            throw EvidenceError.navigationFailed("Element '\(label)' was not found.")
+        }
+        element.tap()
+    }
+
+    public func typeText(_ text: String, intoElement label: String) throws {
+        let element = descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", label))
+            .firstMatch
+        guard element.exists else {
+            throw EvidenceError.navigationFailed("Text input '\(label)' was not found.")
+        }
+        element.tap()
+        element.typeText(text)
+    }
+
+    public func openURL(_ url: URL) throws {
+        open(url)
+    }
+
+    public func swipe(_ direction: NavigationAction.SwipeDirection) throws {
+        switch direction {
+        case .up:
+            swipeUp()
+        case .down:
+            swipeDown()
+        case .left:
+            swipeLeft()
+        case .right:
+            swipeRight()
+        }
     }
 
     public func captureScreenshot() throws -> EvidenceScreenshot {

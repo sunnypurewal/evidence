@@ -85,6 +85,21 @@ final class AppEvidenceTests: XCTestCase {
 
 Screenshots are written to `EVIDENCE_OUTPUT_DIR`, `APPSTORE_SCREENSHOT_DIR`, or `EvidenceOutput` in the current directory.
 
+For pull request comparisons, a UI test can load the same JSON evidence plan in both checked-out revisions instead of rebuilding the flow in Swift:
+
+```swift
+import Evidence
+import XCTest
+
+final class AppEvidenceTests: XCTestCase {
+    func testEvidencePlan() throws {
+        try EvidencePlanRunner.runFromEnvironment(on: XCUIApplication())
+    }
+}
+```
+
+Set `EVIDENCE_PLAN_PATH` to the JSON plan path, or pass `--evidence-plan <path>` to the test process. Set `EVIDENCE_OUTPUT_DIR` to control where screenshots are written. When `EVIDENCE_REVISION_ROLE` is set, for example to `before` or `after`, the runner executes matching phased steps and groups screenshots under that revision directory. The app-side XCTest runner supports launch, accessibility waits, screenshots, tap, type text, swipe, and open URL steps. Video capture and process orchestration remain CLI responsibilities. Historical revisions still need this UI test harness in the app test target; fallback capture for revisions without it is not part of the current package API.
+
 ## CLI Usage
 
 Create a `.evidence.toml` file in the project that will run evidence workflows:

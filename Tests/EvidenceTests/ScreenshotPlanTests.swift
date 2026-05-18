@@ -117,9 +117,232 @@ final class ScreenshotPlanTests: XCTestCase {
         )
     }
 
+    func testLoadedEvidencePlanRunsXCTestStepsInOrderAndReturnsCaptures() throws {
+        let outputDirectory = temporaryDirectory()
+        let planURL = try writePlan("""
+        {
+          "repo": "ExampleOrg/ExampleApp",
+          "pr": 479,
+          "runner": "xctest",
+          "launch": {
+            "arguments": ["--evidence-mode"],
+            "environment": { "EXAMPLE_EVIDENCE_MODE": "1" }
+          },
+          "steps": [
+            { "name": "launch app", "kind": "launch", "phase": "before" },
+            {
+              "name": "wait for home",
+              "kind": "wait",
+              "phase": "before",
+              "target": { "staticText": "Home" },
+              "timeout_seconds": 12
+            },
+            {
+              "name": "wait for search button",
+              "kind": "wait",
+              "phase": "before",
+              "target": { "button": "Search" }
+            },
+            {
+              "name": "capture home",
+              "kind": "screenshot",
+              "phase": "before",
+              "path": "home.png"
+            },
+            {
+              "name": "open search",
+              "kind": "tap",
+              "phase": "before",
+              "target": { "button": "Search" }
+            },
+            {
+              "name": "wait for search",
+              "kind": "wait",
+              "phase": "before",
+              "target": { "predicate": "label == 'Search Ready'" }
+            },
+            {
+              "name": "enter query",
+              "kind": "typeText",
+              "phase": "before",
+              "target": { "textField": "Search Field" },
+              "text": "hinge"
+            },
+            {
+              "name": "open deep link",
+              "kind": "openURL",
+              "phase": "before",
+              "url": "exampleapp://evidence/home"
+            },
+            {
+              "name": "swipe results",
+              "kind": "swipe",
+              "phase": "before",
+              "direction": "up"
+            },
+            {
+              "name": "capture search",
+              "kind": "screenshot",
+              "phase": "before",
+              "path": "search.png"
+            }
+          ]
+        }
+        """)
+        let app = MockApplication()
+        app.staticTexts = ["Home"]
+        app.buttons = ["Search"]
+        app.predicates = ["label == \"Search Ready\""]
+        app.textFields = ["Search Field"]
+
+        let captures = try EvidencePlanRunner.run(
+            planPath: planURL.path,
+            on: app,
+            environment: [
+                "EVIDENCE_OUTPUT_DIR": outputDirectory.path,
+                "EVIDENCE_REVISION_ROLE": "before"
+            ]
+        )
+
+        XCTAssertEqual(app.launchArguments, ["--evidence-mode"])
+        XCTAssertEqual(app.launchEnvironment, ["EXAMPLE_EVIDENCE_MODE": "1"])
+        XCTAssertEqual(app.events, [
+            .launched,
+            .waitedForStaticText("Home"),
+            .waitedForButton("Search"),
+            .capturedScreenshot,
+            .tappedElement("Search"),
+            .waitedForPredicate("label == \"Search Ready\""),
+            .typedText("hinge", into: "Search Field"),
+            .openedURL("exampleapp://evidence/home"),
+            .swiped(.up),
+            .capturedScreenshot
+        ])
+        XCTAssertEqual(captures.map(\.stepName), ["capture home", "capture search"])
+        XCTAssertEqual(captures.map(\.revisionRole), ["before", "before"])
+        XCTAssertEqual(
+            captures.map { $0.url.path.replacingOccurrences(of: outputDirectory.path + "/", with: "") },
+            ["before/home.png", "before/search.png"]
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: captures[0].url.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: captures[1].url.path))
+    }
+
+    func testEvidencePlanFiltersPhaseStepsAndDoesNotDuplicateRevisionDirectory() throws {
+        let outputDirectory = temporaryDirectory()
+        let planURL = try writePlan("""
+        {
+          "repo": "ExampleOrg/ExampleApp",
+          "pr": 479,
+          "runner": "xctest",
+          "steps": [
+            { "name": "launch before", "kind": "launch", "phase": "before" },
+            {
+              "name": "wait before home",
+              "kind": "wait",
+              "phase": "before",
+              "target": { "staticText": "Before Home" }
+            },
+            {
+              "name": "capture before home",
+              "kind": "screenshot",
+              "phase": "before",
+              "path": "before/home.png"
+            },
+            { "name": "launch after", "kind": "launch", "phase": "after" },
+            {
+              "name": "capture after home",
+              "kind": "screenshot",
+              "phase": "after",
+              "path": "after/home.png"
+            }
+          ]
+        }
+        """)
+        let app = MockApplication()
+        app.staticTexts = ["Before Home"]
+
+        let captures = try EvidencePlanRunner.run(
+            planPath: planURL.path,
+            on: app,
+            environment: [
+                "EVIDENCE_OUTPUT_DIR": outputDirectory.path,
+                "EVIDENCE_REVISION_ROLE": "before"
+            ]
+        )
+
+        XCTAssertEqual(app.events, [
+            .launched,
+            .waitedForStaticText("Before Home"),
+            .capturedScreenshot
+        ])
+        XCTAssertEqual(captures.map(\.url.lastPathComponent), ["home.png"])
+        XCTAssertEqual(
+            captures[0].url.path.replacingOccurrences(of: outputDirectory.path + "/", with: ""),
+            "before/home.png"
+        )
+    }
+
+    func testEvidencePlanUnsupportedStepKindNamesTheStepAndReason() throws {
+        let planURL = try writePlan("""
+        {
+          "repo": "ExampleOrg/ExampleApp",
+          "pr": 479,
+          "runner": "xctest",
+          "steps": [
+            { "name": "pinch image", "kind": "pinch" }
+          ]
+        }
+        """)
+
+        XCTAssertThrowsError(try EvidencePlanRunner.run(planPath: planURL.path, on: MockApplication())) { error in
+            XCTAssertEqual(
+                error as? EvidenceError,
+                .unsupportedPlanStep(
+                    step: "pinch image",
+                    kind: "pinch",
+                    reason: "XCTest runner does not support this step kind."
+                )
+            )
+        }
+    }
+
+    func testEvidencePlanRunsFromEnvironmentPlanPath() throws {
+        let outputDirectory = temporaryDirectory()
+        let planURL = try writePlan("""
+        {
+          "repo": "ExampleOrg/ExampleApp",
+          "pr": 479,
+          "runner": "xctest",
+          "steps": [
+            { "name": "launch", "kind": "launch" },
+            { "name": "capture fallback name", "kind": "screenshot" }
+          ]
+        }
+        """)
+
+        let captures = try EvidencePlanRunner.runFromEnvironment(
+            on: MockApplication(),
+            environment: [
+                "EVIDENCE_PLAN_PATH": planURL.path,
+                "EVIDENCE_OUTPUT_DIR": outputDirectory.path
+            ]
+        )
+
+        XCTAssertEqual(captures.map(\.url.lastPathComponent), ["capture-fallback-name.png"])
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    }
+
+    private func writePlan(_ json: String) throws -> URL {
+        let directory = temporaryDirectory()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("plan.json")
+        try json.write(to: url, atomically: true, encoding: .utf8)
+        return url
     }
 }
 
@@ -130,7 +353,11 @@ private final class MockApplication: EvidenceApplication {
         case waitedForButton(String)
         case waitedForPredicate(String)
         case tappedButton(String)
+        case tappedElement(String)
+        case typedText(String, into: String)
+        case openedURL(String)
         case swipedLeft
+        case swiped(NavigationAction.SwipeDirection)
         case capturedScreenshot
     }
 
@@ -138,6 +365,8 @@ private final class MockApplication: EvidenceApplication {
     var launchEnvironment: [String: String] = [:]
     var staticTexts: Set<String> = []
     var buttons: Set<String> = []
+    var accessibilityLabels: Set<String> = []
+    var textFields: Set<String> = []
     var predicates: Set<String> = []
     var events: [Event] = []
 
@@ -167,8 +396,30 @@ private final class MockApplication: EvidenceApplication {
         events.append(.tappedButton(label))
     }
 
+    func tapElement(_ label: String) throws {
+        guard buttons.contains(label) || accessibilityLabels.contains(label) || textFields.contains(label) else {
+            throw EvidenceError.navigationFailed("Element '\(label)' was not found.")
+        }
+        events.append(.tappedElement(label))
+    }
+
+    func typeText(_ text: String, intoElement label: String) throws {
+        guard textFields.contains(label) || accessibilityLabels.contains(label) else {
+            throw EvidenceError.navigationFailed("Text input '\(label)' was not found.")
+        }
+        events.append(.typedText(text, into: label))
+    }
+
+    func openURL(_ url: URL) throws {
+        events.append(.openedURL(url.absoluteString))
+    }
+
     func swipeLeft() {
         events.append(.swipedLeft)
+    }
+
+    func swipe(_ direction: NavigationAction.SwipeDirection) {
+        events.append(.swiped(direction))
     }
 
     func captureScreenshot() throws -> EvidenceScreenshot {

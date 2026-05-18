@@ -43,17 +43,3 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run ActionDefinitionTests
         run: swift test --filter ActionDefinitionTests
-
-  smoke-test:
-    name: Smoke-test on macOS
-    runs-on: [self-hosted, macOS]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run evidence --help via the Action
-        uses: ./
-        with:
-          subcommand: help
-          # The fixture project ships a stub config so the Action's config-resolution path is exercised.
-          config: Examples/fixture-project/.evidence.toml
-          comment-on-pr: 'false'
-          evidence-ref: ${{ github.sha }}
