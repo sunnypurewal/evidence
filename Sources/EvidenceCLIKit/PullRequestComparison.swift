@@ -207,6 +207,7 @@ public struct CapturePullRequestEvidence {
     public var revisionBuilder: BuildRevisionForEvidence?
     public var simulatorPreparer: PrepareSimulatorForEvidenceRun?
     public var planExecutor: EvidencePlanExecuting?
+    public var reporter: (any PullRequestEvidenceReporting)?
     public var fileManager: FileManager
     public var clock: any EvidenceClock
 
@@ -216,6 +217,7 @@ public struct CapturePullRequestEvidence {
         revisionBuilder: BuildRevisionForEvidence? = nil,
         simulatorPreparer: PrepareSimulatorForEvidenceRun? = nil,
         planExecutor: EvidencePlanExecuting? = nil,
+        reporter: (any PullRequestEvidenceReporting)? = nil,
         fileManager: FileManager = .default,
         clock: any EvidenceClock = SystemEvidenceClock()
     ) {
@@ -224,6 +226,7 @@ public struct CapturePullRequestEvidence {
         self.revisionBuilder = revisionBuilder
         self.simulatorPreparer = simulatorPreparer
         self.planExecutor = planExecutor
+        self.reporter = reporter
         self.fileManager = fileManager
         self.clock = clock
     }
@@ -232,6 +235,7 @@ public struct CapturePullRequestEvidence {
     public func execute(_ input: CapturePullRequestEvidenceInput) throws -> PRChangeEvidenceManifest {
         try fileManager.createDirectory(at: input.outputDirectory, withIntermediateDirectories: true)
         let plan = try loadPlan(from: input.planURL)
+        let startedAt = ISO8601DateFormatter().string(from: clock.now())
 
         let resolution = try resolver.execute(
             repo: input.repo,
@@ -239,11 +243,36 @@ public struct CapturePullRequestEvidence {
             beforeRef: input.beforeRef,
             afterRef: input.afterRef
         )
-        let worktrees = try worktreePreparer.execute(
-            selection: resolution.selection,
-            outputDirectory: input.outputDirectory
-        )
-        let timestamp = ISO8601DateFormatter().string(from: clock.now())
+        let worktrees: [ComparisonWorktree]
+        do {
+            worktrees = try worktreePreparer.execute(
+                selection: resolution.selection,
+                outputDirectory: input.outputDirectory
+            )
+        } catch {
+            _ = try reporter?.writeReportOnlyFailure(
+                PullRequestEvidenceReportOnlyFailure(
+                    repo: input.repo,
+                    pr: input.pr,
+                    planPath: input.planPath,
+                    prURL: resolution.metadata.url,
+                    prTitle: resolution.metadata.title,
+                    beforeSHA: resolution.selection.beforeSHA,
+                    afterSHA: resolution.selection.afterSHA,
+                    runnerMode: plan.runner,
+                    simulator: PRChangeEvidenceSimulator(
+                        name: plan.ios?.simulator,
+                        udid: plan.ios?.simulatorUDID
+                    ),
+                    command: manifestCommand(for: input),
+                    startedAt: startedAt,
+                    completedAt: ISO8601DateFormatter().string(from: clock.now()),
+                    errorMessage: (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                ),
+                outputDirectory: input.outputDirectory
+            )
+            throw error
+        }
         let iosSettings = plan.platform == .ios ? plan.ios : nil
         var revisionBuilds: [RevisionBuildResult] = []
         var simulator: PRChangeEvidenceSimulator?
@@ -381,8 +410,8 @@ public struct CapturePullRequestEvidence {
             revisionBuilds: revisionBuilds,
             artifacts: artifacts,
             stepResults: stepResults,
-            startedAt: timestamp,
-            completedAt: timestamp,
+            startedAt: startedAt,
+            completedAt: ISO8601DateFormatter().string(from: clock.now()),
             failures: failures,
             worktrees: worktrees
         )
@@ -392,6 +421,11 @@ public struct CapturePullRequestEvidence {
         try encoder.encode(manifest).write(
             to: input.outputDirectory.appendingPathComponent("manifest.json"),
             options: [.atomic]
+        )
+        try reporter?.writeReport(
+            manifest: manifest,
+            plan: plan,
+            outputDirectory: input.outputDirectory
         )
         if let terminalError {
             throw terminalError

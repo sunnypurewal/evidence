@@ -243,6 +243,13 @@ final class IOSRevisionAdaptersTests: XCTestCase {
         XCTAssertTrue(manifest.failures.first?.message.contains("after") == true)
         XCTAssertEqual(manifest.stepResults.last?.status, .failed)
         XCTAssertEqual(manifest.stepResults.last?.phase, .after)
+
+        let report = output.appendingPathComponent("report.md")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: report.path), "capture-pr should write report.md even for partial capture failures")
+        let reportMarkdown = try String(contentsOf: report, encoding: .utf8)
+        XCTAssertTrue(reportMarkdown.contains("### Missing After Artifact"))
+        XCTAssertTrue(reportMarkdown.contains("capture home"))
+        XCTAssertTrue(reportMarkdown.contains("- Overall status: **failed**"))
     }
 
     func testSimctlPlanExecutorRecordsExplicitVideosForBeforeAndAfter() throws {

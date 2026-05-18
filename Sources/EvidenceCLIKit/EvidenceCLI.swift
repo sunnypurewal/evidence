@@ -608,6 +608,7 @@ public struct EvidenceCLI {
         let outputDirectory = url(forPath: try option("output", in: arguments))
         let beforeRef = optionValue("before-ref", in: arguments)
         let afterRef = optionValue("after-ref", in: arguments)
+        let startedAt = ISO8601DateFormatter().string(from: clock.now())
 
         let capture = CapturePREvidenceRuntime.make(
             fileManager: fileManager,
@@ -617,20 +618,80 @@ public struct EvidenceCLI {
             clock: clock
         )
 
-        try capture.execute(
-            CapturePullRequestEvidenceInput(
-                repo: repo,
-                pr: pr,
-                planPath: planPath,
-                planURL: planURL,
-                outputDirectory: outputDirectory,
-                beforeRef: beforeRef,
-                afterRef: afterRef
-            )
+        let input = CapturePullRequestEvidenceInput(
+            repo: repo,
+            pr: pr,
+            planPath: planPath,
+            planURL: planURL,
+            outputDirectory: outputDirectory,
+            beforeRef: beforeRef,
+            afterRef: afterRef
         )
+
+        do {
+            try capture.execute(input)
+        } catch {
+            let reportURL = outputDirectory.appendingPathComponent("report.md")
+            if !fileManager.fileExists(atPath: reportURL.path) {
+                let reporter = RenderPullRequestEvidenceReport(
+                    comparisonRenderer: ImageMagickComparisonRenderer(
+                        fileManager: fileManager,
+                        runner: runner,
+                        toolPaths: toolPaths
+                    ),
+                    fileManager: fileManager
+                )
+                _ = try? reporter.writeReportOnlyFailure(
+                    PullRequestEvidenceReportOnlyFailure(
+                        repo: repo,
+                        pr: pr,
+                        planPath: planPath,
+                        command: capturePullRequestCommand(
+                            repo: repo,
+                            pr: pr,
+                            planPath: planPath,
+                            outputDirectory: outputDirectory,
+                            beforeRef: beforeRef,
+                            afterRef: afterRef
+                        ),
+                        startedAt: startedAt,
+                        completedAt: ISO8601DateFormatter().string(from: clock.now()),
+                        errorMessage: (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                    ),
+                    outputDirectory: outputDirectory
+                )
+            }
+            throw error
+        }
 
         stdout("Prepared PR comparison worktrees at \(outputDirectory.path)")
         stdout("Wrote manifest at \(outputDirectory.appendingPathComponent("manifest.json").path)")
+        stdout("Wrote report at \(outputDirectory.appendingPathComponent("report.md").path)")
+    }
+
+    private func capturePullRequestCommand(
+        repo: String,
+        pr: Int,
+        planPath: String,
+        outputDirectory: URL,
+        beforeRef: String?,
+        afterRef: String?
+    ) -> [String] {
+        var command = [
+            "evidence",
+            "capture-pr",
+            "--repo", repo,
+            "--pr", "\(pr)",
+            "--plan", planPath,
+            "--output", outputDirectory.path
+        ]
+        if let beforeRef {
+            command.append(contentsOf: ["--before-ref", beforeRef])
+        }
+        if let afterRef {
+            command.append(contentsOf: ["--after-ref", afterRef])
+        }
+        return command
     }
 
     private func markdownURL(for output: URL, config: EvidenceConfig) -> String? {

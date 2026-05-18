@@ -178,6 +178,12 @@ final class PullRequestComparisonTests: XCTestCase {
 
         XCTAssertTrue(runner.commands.isEmpty, "capture-pr should validate the requested plan before running gh or git commands")
         XCTAssertFalse(FileManager.default.fileExists(atPath: output.appendingPathComponent("manifest.json").path))
+
+        let report = output.appendingPathComponent("report.md")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: report.path), "capture-pr should write a report-only failure report even when the plan is missing")
+        let reportMarkdown = try String(contentsOf: report, encoding: .utf8)
+        XCTAssertTrue(reportMarkdown.contains("### Report-Only Partial Output"))
+        XCTAssertTrue(reportMarkdown.contains("Missing PR change evidence plan"))
     }
 
     func testCapturePRSurfacesMissingExplicitRefSeparately() throws {
@@ -317,6 +323,18 @@ final class PullRequestComparisonTests: XCTestCase {
             }
             XCTAssertTrue(message.contains("Git command failed while creating worktree"))
         }
+
+        let reportURL = output.appendingPathComponent("report.md")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: reportURL.path))
+        let report = try String(contentsOf: reportURL, encoding: .utf8)
+        XCTAssertTrue(report.contains("[#22 Resolve visual evidence](https://github.com/RiddimSoftware/epac/pull/479)"))
+        XCTAssertTrue(report.contains("- PR title: Resolve visual evidence"))
+        XCTAssertTrue(report.contains("- PR URL: https://github.com/RiddimSoftware/epac/pull/479"))
+        XCTAssertTrue(report.contains("- Before SHA: `\(baseSHA)`"))
+        XCTAssertTrue(report.contains("- After SHA: `\(headSHA)`"))
+        XCTAssertTrue(report.contains("- Runner mode: `simctl`"))
+        XCTAssertTrue(report.contains("- Simulator: `SIM-PR`"))
+        XCTAssertTrue(report.contains("Git command failed while creating worktree"))
     }
 
     private func testCLI(directory: URL, runner: PRComparisonRunner) -> EvidenceCLI {

@@ -172,10 +172,11 @@ Ports: `PullRequestEvidenceReporting`, `MarkdownRendering`, `PullRequestCommentP
 Primary adapters: Markdown report renderer, GitHub issue comment adapter,
 filesystem report writer.
 
-Current implementation: Existing markdown snippets are generated inside
-`Sources/EvidenceCLIKit/EvidenceCLI.swift` for single-revision evidence and web
-capture. PR evidence report rendering should move into a dedicated renderer so
-the CLI router remains a thin adapter.
+Current implementation: `Sources/EvidenceCLIKit/PullRequestEvidenceReport.swift`
+implements markdown report rendering and best-effort ImageMagick comparison
+images. `CapturePullRequestEvidence` calls the reporter after writing
+`manifest.json`, before propagating capture failures, so partial runs still
+leave `report.md` for review.
 
 ## Architecture Guardrails
 
