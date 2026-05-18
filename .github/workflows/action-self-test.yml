@@ -11,7 +11,7 @@ on:
 jobs:
   lint-workflows:
     name: actionlint (example + repo workflows)
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS]
     steps:
       - uses: actions/checkout@v4
       - name: Install actionlint
@@ -38,7 +38,7 @@ jobs:
 
   validate-action-manifest:
     name: Validate action.yml manifest
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS]
     steps:
       - uses: actions/checkout@v4
       - name: Run ActionDefinitionTests
@@ -46,7 +46,7 @@ jobs:
 
   smoke-test:
     name: Smoke-test on macOS
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS]
     steps:
       - uses: actions/checkout@v4
       - name: Run evidence --help via the Action

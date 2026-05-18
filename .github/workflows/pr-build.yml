@@ -8,11 +8,12 @@ on:
 
 permissions:
   contents: read
+  checks: write
 
 jobs:
   pr-build:
     name: pr-build
-    runs-on: macos-15
+    runs-on: [self-hosted, macOS]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

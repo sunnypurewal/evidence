@@ -1,0 +1,102 @@
+{
+  "repo": "ExampleOrg/ExampleApp",
+  "pr": 479,
+  "before_ref": "main",
+  "after_ref": {
+    "kind": "sha",
+    "value": "abc1234"
+  },
+  "platform": "ios",
+  "runner": "xctest",
+  "ios": {
+    "project": "ios/ExampleApp.xcodeproj",
+    "scheme": "ExampleApp",
+    "bundle_id": "com.example.app",
+    "simulator": "iPhone 17 Pro",
+    "destination": "platform=iOS Simulator,name=iPhone 17 Pro"
+  },
+  "launch": {
+    "arguments": [
+      "--evidence-mode",
+      "-UIAnimationsDisabled",
+      "YES"
+    ],
+    "environment": {
+      "EXAMPLE_EVIDENCE_MODE": "1"
+    }
+  },
+  "output_directory": "docs/pr-evidence/EVI-1",
+  "video": {
+    "enabled": true,
+    "name": "home-flow"
+  },
+  "steps": [
+    {
+      "name": "launch before build",
+      "kind": "launch",
+      "phase": "before"
+    },
+    {
+      "name": "wait for before home",
+      "kind": "wait",
+      "phase": "before",
+      "target": {
+        "staticText": "Home"
+      },
+      "timeout_seconds": 12
+    },
+    {
+      "name": "capture before home",
+      "kind": "screenshot",
+      "phase": "before",
+      "path": "before/home.png"
+    },
+    {
+      "name": "open cabinet",
+      "kind": "tap",
+      "phase": "before",
+      "target": {
+        "accessibilityLabel": "Cabinet 1"
+      }
+    },
+    {
+      "name": "start after video",
+      "kind": "startVideo",
+      "phase": "after",
+      "path": "after/home-flow.mov"
+    },
+    {
+      "name": "open after deep link",
+      "kind": "openURL",
+      "phase": "after",
+      "url": "exampleapp://evidence/home"
+    },
+    {
+      "name": "enter search text",
+      "kind": "typeText",
+      "phase": "after",
+      "target": {
+        "accessibilityLabel": "Search"
+      },
+      "text": "hinge"
+    },
+    {
+      "name": "swipe through results",
+      "kind": "swipe",
+      "phase": "after",
+      "direction": "up"
+    },
+    {
+      "name": "capture after home",
+      "kind": "screenshot",
+      "phase": "after",
+      "path": "after/home.png"
+    },
+    {
+      "name": "stop after video",
+      "kind": "stopVideo",
+      "phase": "after",
+      "path": "after/home-flow.mov"
+    }
+  ]
+}
