@@ -41,6 +41,64 @@ final class ActionDefinitionTests: XCTestCase {
         )
     }
 
+    func testDefaultRequirementsIncludeCapturePRInputs() {
+        let requiredInputs = Set(ActionDefinitionValidator.defaultRequirements.requiredInputNames)
+
+        for input in ["pr", "plan", "before-ref", "after-ref", "keep-worktrees", "summary-only"] {
+            XCTAssertTrue(
+                requiredInputs.contains(input),
+                "ActionDefinitionValidator.defaultRequirements must include capture-pr input '\(input)'."
+            )
+        }
+    }
+
+    func testRepositoryActionYmlWiresCapturePRInputsAndGitHubContextDefaults() throws {
+        let actionURL = repositoryRoot().appendingPathComponent("action.yml")
+        let source = try String(contentsOf: actionURL, encoding: .utf8)
+
+        for input in ["pr", "plan", "before-ref", "after-ref", "keep-worktrees", "summary-only"] {
+            XCTAssertTrue(
+                source.contains("\n  \(input):"),
+                "action.yml must declare the capture-pr input '\(input)'."
+            )
+        }
+
+        XCTAssertTrue(source.contains("EVIDENCE_PR_INPUT: ${{ inputs.pr }}"))
+        XCTAssertTrue(source.contains("EVIDENCE_PLAN: ${{ inputs.plan }}"))
+        XCTAssertTrue(source.contains("EVIDENCE_GITHUB_REPOSITORY: ${{ github.repository }}"))
+        XCTAssertTrue(source.contains("EVIDENCE_GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}"))
+        XCTAssertTrue(source.contains("EVIDENCE_GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}"))
+        XCTAssertTrue(source.contains("EVIDENCE_GITHUB_HEAD_SHA: ${{ github.event.pull_request.head.sha }}"))
+        XCTAssertTrue(
+            source.contains("GH_TOKEN: ${{ inputs.github-token }}"),
+            "Run evidence must expose github-token to gh for capture-pr metadata reads."
+        )
+        XCTAssertTrue(source.contains("args+=(\"--repo\" \"${repo}\")"))
+        XCTAssertTrue(source.contains("args+=(\"--pr\" \"${pr_number}\")"))
+        XCTAssertTrue(source.contains("args+=(\"--plan\" \"${EVIDENCE_PLAN}\")"))
+        XCTAssertTrue(source.contains("args+=(\"--before-ref\" \"${before_ref}\")"))
+        XCTAssertTrue(source.contains("args+=(\"--after-ref\" \"${after_ref}\")"))
+    }
+
+    func testRepositoryActionYmlCapturePRCommentSummarizesReport() throws {
+        let actionURL = repositoryRoot().appendingPathComponent("action.yml")
+        let source = try String(contentsOf: actionURL, encoding: .utf8)
+
+        XCTAssertTrue(source.contains("report.md"))
+        XCTAssertTrue(source.contains("Report status: **${report_status}**"))
+        XCTAssertTrue(source.contains("Before SHA:"))
+        XCTAssertTrue(source.contains("before_sha"))
+        XCTAssertTrue(source.contains("After SHA:"))
+        XCTAssertTrue(source.contains("after_sha"))
+        XCTAssertTrue(source.contains("Artifact count: ${EVIDENCE_ARTIFACT_COUNT}"))
+        XCTAssertTrue(source.contains("Report:"))
+        XCTAssertTrue(source.contains("report_rel"))
+        XCTAssertTrue(
+            source.contains("Overall status:"),
+            "capture-pr PR comments must be based on the generated report status, not just raw artifact paths."
+        )
+    }
+
     func testValidatorRejectsActionMissingRequiredInput() {
         let source = """
         name: 'evidence'

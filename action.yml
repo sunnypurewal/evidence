@@ -21,6 +21,30 @@ inputs:
     description: 'Ticket key to pass to capture-evidence (e.g. APP-123). Required when subcommand is capture-evidence.'
     required: false
     default: ''
+  pr:
+    description: 'Pull request number to pass to capture-pr. Defaults to the pull_request event number when available.'
+    required: false
+    default: ''
+  plan:
+    description: 'Path to the PR evidence plan JSON to pass to capture-pr. Required when subcommand is capture-pr.'
+    required: false
+    default: ''
+  before-ref:
+    description: 'Optional before/base git ref for capture-pr. Defaults to the pull_request base SHA when available.'
+    required: false
+    default: ''
+  after-ref:
+    description: 'Optional after/head git ref for capture-pr. Defaults to the pull_request head SHA when available.'
+    required: false
+    default: ''
+  keep-worktrees:
+    description: 'When true, keep capture-pr comparison worktrees in the output directory for debugging. Defaults to false so workflow artifacts stay compact.'
+    required: false
+    default: 'false'
+  summary-only:
+    description: 'When true, keep the capture-pr PR comment to report status, SHAs, artifact count, and report path. Set false to include an excerpt from report.md.'
+    required: false
+    default: 'true'
   output-dir:
     description: 'Directory where evidence writes captured artifacts. Exposed to the CLI via EVIDENCE_OUTPUT_DIR.'
     required: false
@@ -38,7 +62,7 @@ inputs:
     required: false
     default: ''
   comment-on-pr:
-    description: 'When true, post a PR comment with thumbnails of artifacts produced by this run. No-op outside pull_request events. Requires github-token.'
+    description: 'When true, post a PR comment with artifacts for standard captures or a report summary for capture-pr. No-op outside pull_request events. Requires github-token.'
     required: false
     default: 'true'
   github-token:
@@ -223,8 +247,20 @@ runs:
         EVIDENCE_PLATFORM: ${{ inputs.platform }}
         EVIDENCE_CONFIG: ${{ inputs.config }}
         EVIDENCE_TICKET: ${{ inputs.ticket }}
+        EVIDENCE_PR_INPUT: ${{ inputs.pr }}
+        EVIDENCE_PLAN: ${{ inputs.plan }}
+        EVIDENCE_BEFORE_REF_INPUT: ${{ inputs.before-ref }}
+        EVIDENCE_AFTER_REF_INPUT: ${{ inputs.after-ref }}
+        EVIDENCE_KEEP_WORKTREES: ${{ inputs.keep-worktrees }}
+        EVIDENCE_SUMMARY_ONLY: ${{ inputs.summary-only }}
         EVIDENCE_OUTPUT_DIR_INPUT: ${{ inputs.output-dir }}
         EVIDENCE_EXTRA_ARGS: ${{ inputs.extra-args }}
+        EVIDENCE_GITHUB_REPOSITORY: ${{ github.repository }}
+        EVIDENCE_GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
+        EVIDENCE_GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        EVIDENCE_GITHUB_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
         set -euo pipefail
         cli="${EVIDENCE_CLI}"
@@ -242,6 +278,7 @@ runs:
           "${cli}" --help
           echo "output-dir=" >> "$GITHUB_OUTPUT"
           echo "artifact-count=0" >> "$GITHUB_OUTPUT"
+          echo "exit-code=0" >> "$GITHUB_OUTPUT"
           exit 0
         fi
 
@@ -257,6 +294,7 @@ runs:
         fi
 
         args=("${subcommand}")
+        resolved_output_dir=""
         case "${subcommand}" in
           capture-evidence)
             if [ -z "${EVIDENCE_TICKET}" ]; then
@@ -264,6 +302,39 @@ runs:
               exit 1
             fi
             args+=("--ticket" "${EVIDENCE_TICKET}")
+            ;;
+          capture-pr)
+            repo="${EVIDENCE_GITHUB_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
+            pr_number="${EVIDENCE_PR_INPUT:-${EVIDENCE_GITHUB_PR_NUMBER:-}}"
+            before_ref="${EVIDENCE_BEFORE_REF_INPUT:-${EVIDENCE_GITHUB_BASE_SHA:-}}"
+            after_ref="${EVIDENCE_AFTER_REF_INPUT:-${EVIDENCE_GITHUB_HEAD_SHA:-}}"
+
+            if [ -z "${repo}" ]; then
+              echo "::error::capture-pr requires a GitHub repository context."
+              exit 1
+            fi
+            if [ -z "${pr_number}" ]; then
+              echo "::error::capture-pr requires the 'pr' input or a pull_request event number."
+              exit 1
+            fi
+            if [ -z "${EVIDENCE_PLAN}" ]; then
+              echo "::error::capture-pr requires the 'plan' input."
+              exit 1
+            fi
+
+            resolved_output_dir="${EVIDENCE_OUTPUT_DIR_INPUT:-docs/build-evidence/pr-${pr_number}}"
+            mkdir -p "${resolved_output_dir}"
+            export EVIDENCE_OUTPUT_DIR="${resolved_output_dir}"
+            args+=("--repo" "${repo}")
+            args+=("--pr" "${pr_number}")
+            args+=("--plan" "${EVIDENCE_PLAN}")
+            args+=("--output" "${resolved_output_dir}")
+            if [ -n "${before_ref}" ]; then
+              args+=("--before-ref" "${before_ref}")
+            fi
+            if [ -n "${after_ref}" ]; then
+              args+=("--after-ref" "${after_ref}")
+            fi
             ;;
         esac
 
@@ -279,7 +350,10 @@ runs:
         fi
 
         echo "Running: ${cli} ${args[*]}"
+        set +e
         "${cli}" "${args[@]}"
+        evidence_exit=$?
+        set -e
 
         resolved_output_dir="${EVIDENCE_OUTPUT_DIR:-}"
         if [ -z "${resolved_output_dir}" ]; then
@@ -294,6 +368,14 @@ runs:
           fi
         fi
 
+        if [ "${subcommand}" = "capture-pr" ] && [ "${EVIDENCE_KEEP_WORKTREES}" != "true" ] && [ -d "${resolved_output_dir}/worktrees" ]; then
+          for worktree in "${resolved_output_dir}"/worktrees/before-* "${resolved_output_dir}"/worktrees/after-*; do
+            [ -d "${worktree}" ] || continue
+            git -C "${GITHUB_WORKSPACE:-$PWD}" worktree remove --force "${worktree}" || rm -rf "${worktree}"
+          done
+          rm -rf "${resolved_output_dir}/worktrees/.evidence-owned"
+        fi
+
         artifact_count=0
         if [ -d "${resolved_output_dir}" ]; then
           # `wc -l` consumes the full stream, so pipefail is safe here. Strip
@@ -303,6 +385,11 @@ runs:
         fi
         echo "output-dir=${resolved_output_dir}" >> "$GITHUB_OUTPUT"
         echo "artifact-count=${artifact_count}" >> "$GITHUB_OUTPUT"
+        echo "exit-code=${evidence_exit}" >> "$GITHUB_OUTPUT"
+
+        if [ "${evidence_exit}" -ne 0 ] && [ "${subcommand}" != "capture-pr" ]; then
+          exit "${evidence_exit}"
+        fi
 
     - name: Comment on PR
       if: ${{ github.event_name == 'pull_request' && inputs.comment-on-pr == 'true' && inputs.github-token != '' }}
@@ -312,10 +399,11 @@ runs:
         EVIDENCE_OUTPUT_DIR_RESOLVED: ${{ steps.run-evidence.outputs.output-dir }}
         EVIDENCE_SUBCOMMAND: ${{ inputs.subcommand }}
         EVIDENCE_ARTIFACT_COUNT: ${{ steps.run-evidence.outputs.artifact-count }}
+        EVIDENCE_SUMMARY_ONLY: ${{ inputs.summary-only }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
       run: |
         set -uo pipefail
-        if [ "${EVIDENCE_ARTIFACT_COUNT:-0}" = "0" ]; then
+        if [ "${EVIDENCE_ARTIFACT_COUNT:-0}" = "0" ] && [ "${EVIDENCE_SUBCOMMAND}" != "capture-pr" ]; then
           echo "No artifacts produced; skipping PR comment."
           exit 0
         fi
@@ -334,22 +422,64 @@ runs:
           > "${artifacts_file}.all" || true
         head -16 "${artifacts_file}.all" > "${artifacts_file}" || true
 
-        {
-          echo "### evidence: ${EVIDENCE_SUBCOMMAND}"
-          echo
-          echo "Captured ${EVIDENCE_ARTIFACT_COUNT} artifact(s) on ${RUNNER_OS} (run ${GITHUB_RUN_ID})."
-          echo
-          echo "<details><summary>Artifacts</summary>"
-          echo
-          while IFS= read -r artifact; do
-            rel="${artifact#${GITHUB_WORKSPACE}/}"
-            echo "- \`${rel}\`"
-          done < "${artifacts_file}"
-          echo
-          echo "</details>"
-          echo
-          echo "_Posted by the [evidence GitHub Action](https://github.com/RiddimSoftware/evidence)._"
-        } > "${body_file}"
+        if [ "${EVIDENCE_SUBCOMMAND}" = "capture-pr" ]; then
+          report_path="${out_dir%/}/report.md"
+          workspace="${GITHUB_WORKSPACE:-}"
+          if [ -n "${workspace}" ]; then
+            report_rel="${report_path#${workspace}/}"
+          else
+            report_rel="${report_path}"
+          fi
+
+          report_status="unavailable"
+          before_sha="unavailable"
+          after_sha="unavailable"
+          if [ -f "${report_path}" ]; then
+            report_status="$(awk -F'\\*\\*' '/Overall status:/ { print $2; exit }' "${report_path}")"
+            before_sha="$(awk -F'`' '/Before SHA:/ { print $2; exit }' "${report_path}")"
+            after_sha="$(awk -F'`' '/After SHA:/ { print $2; exit }' "${report_path}")"
+            report_status="${report_status:-unavailable}"
+            before_sha="${before_sha:-unavailable}"
+            after_sha="${after_sha:-unavailable}"
+          fi
+
+          {
+            echo "### evidence: capture-pr"
+            echo
+            echo "- Report status: **${report_status}**"
+            echo "- Before SHA: \`${before_sha}\`"
+            echo "- After SHA: \`${after_sha}\`"
+            echo "- Artifact count: ${EVIDENCE_ARTIFACT_COUNT}"
+            echo "- Report: \`${report_rel}\`"
+            echo
+            if [ "${EVIDENCE_SUMMARY_ONLY}" != "true" ] && [ -f "${report_path}" ]; then
+              echo "<details><summary>Report excerpt</summary>"
+              echo
+              sed -n '1,80p' "${report_path}"
+              echo
+              echo "</details>"
+              echo
+            fi
+            echo "_Posted by the [evidence GitHub Action](https://github.com/RiddimSoftware/evidence)._"
+          } > "${body_file}"
+        else
+          {
+            echo "### evidence: ${EVIDENCE_SUBCOMMAND}"
+            echo
+            echo "Captured ${EVIDENCE_ARTIFACT_COUNT} artifact(s) on ${RUNNER_OS} (run ${GITHUB_RUN_ID})."
+            echo
+            echo "<details><summary>Artifacts</summary>"
+            echo
+            while IFS= read -r artifact; do
+              rel="${artifact#${GITHUB_WORKSPACE}/}"
+              echo "- \`${rel}\`"
+            done < "${artifacts_file}"
+            echo
+            echo "</details>"
+            echo
+            echo "_Posted by the [evidence GitHub Action](https://github.com/RiddimSoftware/evidence)._"
+          } > "${body_file}"
+        fi
 
         if [ -z "${PR_NUMBER}" ]; then
           echo "::warning::Could not determine pull request number; skipping comment."
@@ -374,3 +504,9 @@ runs:
       shell: bash
       run: |
         xcrun simctl shutdown "${{ steps.simulator.outputs.udid }}" >/dev/null 2>&1 || true
+
+    - name: Fail evidence run
+      if: ${{ steps.run-evidence.outputs.exit-code != '0' }}
+      shell: bash
+      run: |
+        exit "${{ steps.run-evidence.outputs.exit-code }}"

@@ -1,0 +1,40 @@
+name: Capture PR evidence
+
+# Drop this file into your iOS app repo at .github/workflows/capture-pr-on-pr.yml.
+# It runs the evidence capture-pr flow on every pull request, posts a concise
+# report comment, and uploads the full evidence bundle for reviewer download.
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  capture-pr:
+    runs-on: macos-14
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Check out app code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Capture before/after PR evidence
+        id: capture-pr
+        uses: RiddimSoftware/evidence@v0
+        with:
+          subcommand: capture-pr
+          plan: .evidence/pr-home.json
+          output-dir: docs/build-evidence/pr-${{ github.event.pull_request.number }}
+          comment-on-pr: 'true'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload PR evidence artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-pr-${{ github.event.pull_request.number }}
+          path: ${{ steps.capture-pr.outputs['output-dir'] }}
+          if-no-files-found: ignore

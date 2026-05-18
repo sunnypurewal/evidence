@@ -272,15 +272,16 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-The Action accepts a `subcommand` input matching the CLI verb (`capture-screenshots`, `capture-evidence`, `capture-pr`, `capture-web`, `resize`, `render-marketing`, `record-preview`, `upload-screenshots`) along with passthrough inputs for `config`, `ticket`, `output-dir`, and `extra-args`. Set `comment-on-pr: 'true'` and pass `github-token` to have the Action post a PR comment listing every artifact produced by the run; the comment step is automatically skipped when no token is supplied or when the workflow does not run on a `pull_request` event.
+The Action accepts a `subcommand` input matching the CLI verb (`capture-screenshots`, `capture-evidence`, `capture-pr`, `capture-web`, `resize`, `render-marketing`, `record-preview`, `upload-screenshots`) along with passthrough inputs for `config`, `ticket`, `output-dir`, and `extra-args`. For `capture-pr`, use `plan` plus optional `pr`, `before-ref`, `after-ref`, `keep-worktrees`, and `summary-only`; pull request workflows default `pr`, `before-ref`, and `after-ref` from the GitHub event. Set `comment-on-pr: 'true'` and pass `github-token` to have the Action post a PR comment: standard captures list artifacts, while `capture-pr` summarizes `report.md` with status, before/after SHAs, artifact count, and the report path. The comment step is automatically skipped when no token is supplied or when the workflow does not run on a `pull_request` event.
 
 The `platform` input selects the capture mode: `ios` (default) for iOS simulator captures on macOS runners, or `web` for Playwright Chromium screenshots on any runner (including `ubuntu-latest`). When `platform: web`, Node.js 20 and the Playwright Chromium browser are installed and cached automatically.
 
 ImageMagick and ffmpeg are installed and cached the first time the Action runs on an iOS runner, so warm runs reuse the formula tarballs. The `evidence` CLI itself is built once per release ref and cached under `~/runner.temp/evidence-build/.build`.
 
-Three ready-to-copy workflows live under [`Examples/workflows/`](Examples/workflows/):
+Four ready-to-copy workflows live under [`Examples/workflows/`](Examples/workflows/):
 
 - `capture-evidence-on-pr.yml` — captures a screenshot per pull request, posts it as a PR comment, and uploads it as an artifact.
+- `capture-pr-on-pr.yml` — captures before/after PR evidence, posts a concise report comment, and uploads the evidence bundle as an artifact.
 - `capture-screenshots-on-tag.yml` — captures the full App Store screenshot matrix when you push a release tag.
 - `capture-web-on-pr.yml` — starts a local HTTP server and captures Playwright web screenshots on every PR, posting a comment with the results.
 

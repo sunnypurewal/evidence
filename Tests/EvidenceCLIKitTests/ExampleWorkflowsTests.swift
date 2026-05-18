@@ -52,6 +52,25 @@ final class ExampleWorkflowsTests: XCTestCase {
         }
     }
 
+    func testCapturePROnPRWorkflowIsCopyPasteable() throws {
+        let root = repositoryRoot()
+        let workflowURL = root.appendingPathComponent("Examples/workflows/capture-pr-on-pr.yml")
+        let workflow = try String(contentsOf: workflowURL, encoding: .utf8)
+
+        XCTAssertTrue(workflow.contains("on:\n  pull_request:"))
+        XCTAssertTrue(workflow.contains("runs-on: macos-14") || workflow.contains("runs-on: macos-15"))
+        XCTAssertTrue(workflow.contains("uses: actions/checkout@v4"))
+        XCTAssertTrue(workflow.contains("fetch-depth: 0"))
+        XCTAssertTrue(workflow.contains("uses: RiddimSoftware/evidence@v0"))
+        XCTAssertTrue(workflow.contains("subcommand: capture-pr"))
+        XCTAssertTrue(workflow.contains("plan: .evidence/pr-home.json"))
+        XCTAssertTrue(workflow.contains("output-dir: docs/build-evidence/pr-${{ github.event.pull_request.number }}"))
+        XCTAssertTrue(workflow.contains("comment-on-pr: 'true'"))
+        XCTAssertTrue(workflow.contains("github-token: ${{ secrets.GITHUB_TOKEN }}"))
+        XCTAssertTrue(workflow.contains("uses: actions/upload-artifact@v4"))
+        XCTAssertTrue(workflow.contains("path: ${{ steps.capture-pr.outputs['output-dir'] }}"))
+    }
+
     private func parseInputNames(from actionSource: String) -> Set<String> {
         var names: Set<String> = []
         var inInputs = false
