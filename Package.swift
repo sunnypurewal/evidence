@@ -37,7 +37,10 @@ let package = Package(
         ),
         .testTarget(
             name: "EvidenceCLIKitTests",
-            dependencies: ["EvidenceCLIKit"]
+            dependencies: ["EvidenceCLIKit"],
+            resources: [
+                .copy("Fixtures")
+            ]
         )
     ]
 )

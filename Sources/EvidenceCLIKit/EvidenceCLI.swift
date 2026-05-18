@@ -473,14 +473,16 @@ public struct EvidenceCLI {
         let env = ProcessInfo.processInfo.environment
 
         let token: String
-        if let t = tokenFlag, !t.isEmpty {
+        let missingTokenMessage = "--comment-on-pr true requires a GitHub token. Pass --github-token <token> or set the GITHUB_TOKEN environment variable."
+        if let t = tokenFlag {
+            guard !t.isEmpty else {
+                throw CLIError.commandFailed(missingTokenMessage)
+            }
             token = t
         } else if let t = env["GITHUB_TOKEN"], !t.isEmpty {
             token = t
         } else {
-            throw CLIError.commandFailed(
-                "--comment-on-pr true requires a GitHub token. Pass --github-token <token> or set the GITHUB_TOKEN environment variable."
-            )
+            throw CLIError.commandFailed(missingTokenMessage)
         }
 
         guard let repo = env["GITHUB_REPOSITORY"], !repo.isEmpty else {
