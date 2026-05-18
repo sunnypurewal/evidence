@@ -223,6 +223,7 @@ public enum Help {
     Runner behavior:
       runner = "xctest" runs xcodebuild test once for before and after with
       EVIDENCE_PLAN_PATH, EVIDENCE_OUTPUT_DIR, and EVIDENCE_REVISION_ROLE set.
+      XCTest video steps are recorded by CLI-managed simctl recording.
       runner = "simctl" supports launch, wait seconds, screenshot, openURL,
       startVideo, and stopVideo steps through simctl.
 

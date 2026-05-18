@@ -64,6 +64,86 @@ final class IOSRevisionAdaptersTests: XCTestCase {
         ])
     }
 
+    func testXCTestPlanExecutorRecordsDeclaredVideoArtifactsForBeforeAndAfter() throws {
+        let directory = try temporaryDirectory()
+        let output = directory.appendingPathComponent("proof/pr-54", isDirectory: true)
+        let plan = PRChangeEvidencePlan(
+            repo: "RiddimSoftware/example",
+            pr: 54,
+            platform: .ios,
+            runner: .xctest,
+            ios: PRChangeEvidenceIOSSettings(
+                workspace: "ios/Example.xcworkspace",
+                scheme: "Example",
+                bundleID: "com.example.app",
+                simulatorUDID: "SIM-123",
+                destination: "platform=iOS Simulator,id=SIM-123"
+            ),
+            steps: [
+                PRChangeEvidenceStep(name: "launch app", kind: .launch),
+                PRChangeEvidenceStep(name: "start flow", kind: .startVideo, path: "flow.mov"),
+                PRChangeEvidenceStep(name: "capture home", kind: .screenshot, path: "home.png"),
+                PRChangeEvidenceStep(name: "stop flow", kind: .stopVideo, path: "flow.mov")
+            ]
+        )
+        let runner = IOSWorkflowRunner(
+            ghJSON: "{}",
+            resolvedRefs: [:],
+            createXCTestScreenshots: true
+        )
+        let videoRecorder = FakeVideoRecorder()
+        let executor = XcodeTestPlanExecutor(
+            runner: runner,
+            xcrunPath: "/usr/bin/xcrun",
+            artifactWriter: FileArtifactWriter(),
+            videoRecorder: videoRecorder,
+            clock: IOSFixedEvidenceClock(date: Date(timeIntervalSince1970: 1_714_000_000))
+        )
+
+        let result = try executor.execute(EvidencePlanExecutionRequest(
+            plan: plan,
+            planURL: directory.appendingPathComponent(".evidence/pr-home.json"),
+            outputDirectory: output,
+            worktrees: [
+                ComparisonWorktree(label: .before, sha: "before", path: directory.appendingPathComponent("before-worktree").path),
+                ComparisonWorktree(label: .after, sha: "after", path: directory.appendingPathComponent("after-worktree").path)
+            ],
+            revisionBuilds: [
+                revisionBuild(.before, output: output),
+                revisionBuild(.after, output: output)
+            ],
+            ios: plan.ios!,
+            launch: plan.launch
+        ))
+
+        XCTAssertTrue(result.succeeded)
+        XCTAssertEqual(videoRecorder.startedPaths, [
+            output.appendingPathComponent("before/flow.mov").path,
+            output.appendingPathComponent("after/flow.mov").path
+        ])
+        XCTAssertEqual(videoRecorder.stoppedPaths, videoRecorder.startedPaths)
+        let videoArtifacts = result.artifacts.filter { $0.kind == .video }
+        XCTAssertEqual(videoArtifacts.map(\.phase), [.before, .after])
+        XCTAssertEqual(videoArtifacts.map(\.stepName), ["stop flow", "stop flow"])
+        XCTAssertEqual(videoArtifacts.map(\.path), [
+            output.appendingPathComponent("before/flow.mov").path,
+            output.appendingPathComponent("after/flow.mov").path
+        ])
+        XCTAssertEqual(videoArtifacts.map(\.mediaType), ["video/quicktime", "video/quicktime"])
+        XCTAssertEqual(videoArtifacts.map(\.fileSize), [3, 3])
+        XCTAssertEqual(
+            result.stepResults
+                .filter { $0.kind == .startVideo || $0.kind == .stopVideo }
+                .map(\.artifactPath),
+            [
+                output.appendingPathComponent("before/flow.mov").path,
+                output.appendingPathComponent("before/flow.mov").path,
+                output.appendingPathComponent("after/flow.mov").path,
+                output.appendingPathComponent("after/flow.mov").path
+            ]
+        )
+    }
+
     func testCapturePRRunsLaunchOnlySimctlFlowAndRecordsScreenshotArtifacts() throws {
         let directory = try temporaryDirectory()
         let output = directory.appendingPathComponent("proof/pr-51", isDirectory: true)
@@ -180,9 +260,9 @@ final class IOSRevisionAdaptersTests: XCTestCase {
             ),
             steps: [
                 PRChangeEvidenceStep(name: "launch app", kind: .launch),
-                PRChangeEvidenceStep(name: "start flow", kind: .startVideo, path: "flow.mov"),
+                PRChangeEvidenceStep(name: "start flow", kind: .startVideo, path: "flow-start.mov"),
                 PRChangeEvidenceStep(name: "settle", kind: .wait, seconds: 0),
-                PRChangeEvidenceStep(name: "stop flow", kind: .stopVideo, path: "flow.mov")
+                PRChangeEvidenceStep(name: "stop flow", kind: .stopVideo, path: "flow-stop.mov")
             ]
         )
         let simulator = FakeSimulatorController()
@@ -212,8 +292,8 @@ final class IOSRevisionAdaptersTests: XCTestCase {
 
         XCTAssertTrue(result.succeeded)
         XCTAssertEqual(videoRecorder.startedPaths, [
-            output.appendingPathComponent("before/flow.mov").path,
-            output.appendingPathComponent("after/flow.mov").path
+            output.appendingPathComponent("before/flow-start.mov").path,
+            output.appendingPathComponent("after/flow-start.mov").path
         ])
         XCTAssertEqual(videoRecorder.stoppedPaths, videoRecorder.startedPaths)
         let videoArtifacts = result.artifacts.filter { $0.kind == .video }

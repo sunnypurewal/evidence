@@ -276,6 +276,7 @@ public enum CapturePREvidenceRuntime {
                 runner: runner,
                 xcrunPath: toolPaths.xcrun,
                 artifactWriter: artifactWriter,
+                videoRecorder: SimctlVideoRecorder(xcrunPath: toolPaths.xcrun),
                 fileManager: fileManager,
                 clock: clock
             ),

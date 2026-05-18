@@ -97,6 +97,7 @@ public struct FileArtifactWriter: ArtifactWriting {
 public struct XcodeTestPlanExecutor: EvidencePlanExecuting {
     public var runner: CommandRunning
     public var xcrunPath: String
+    public var videoRecorder: any VideoRecording
     public var artifactWriter: any ArtifactWriting
     public var fileManager: FileManager
     public var clock: any EvidenceClock
@@ -105,11 +106,13 @@ public struct XcodeTestPlanExecutor: EvidencePlanExecuting {
         runner: CommandRunning,
         xcrunPath: String,
         artifactWriter: any ArtifactWriting,
+        videoRecorder: any VideoRecording = NoopVideoRecorder(),
         fileManager: FileManager = .default,
         clock: any EvidenceClock = SystemEvidenceClock()
     ) {
         self.runner = runner
         self.xcrunPath = xcrunPath
+        self.videoRecorder = videoRecorder
         self.artifactWriter = artifactWriter
         self.fileManager = fileManager
         self.clock = clock
@@ -126,15 +129,39 @@ public struct XcodeTestPlanExecutor: EvidencePlanExecuting {
             let phaseOutputDirectory = request.outputDirectory.appendingPathComponent(build.phase.rawValue, isDirectory: true)
             try fileManager.createDirectory(at: phaseOutputDirectory, withIntermediateDirectories: true)
 
-            let commandResult = try runner.run(
-                xcrunPath,
-                xcodebuildTestArguments(ios: request.ios, derivedDataPath: build.derivedDataPath),
-                workingDirectory: URL(fileURLWithPath: worktree.path, isDirectory: true),
-                environment: [
-                    "EVIDENCE_PLAN_PATH": request.planURL.path,
-                    "EVIDENCE_OUTPUT_DIR": phaseOutputDirectory.path,
-                    "EVIDENCE_REVISION_ROLE": build.phase.rawValue
-                ]
+            let phaseSteps = steps(in: request.plan, for: build.phase)
+            let videoPlan = try videoCapturePlan(
+                in: request.plan,
+                steps: phaseSteps,
+                phase: build.phase,
+                outputDirectory: request.outputDirectory
+            )
+            let videoSession = try startVideoIfNeeded(videoPlan, ios: request.ios)
+
+            let commandResult: CommandResult
+            do {
+                commandResult = try runner.run(
+                    xcrunPath,
+                    xcodebuildTestArguments(ios: request.ios, derivedDataPath: build.derivedDataPath),
+                    workingDirectory: URL(fileURLWithPath: worktree.path, isDirectory: true),
+                    environment: [
+                        "EVIDENCE_PLAN_PATH": request.planURL.path,
+                        "EVIDENCE_OUTPUT_DIR": phaseOutputDirectory.path,
+                        "EVIDENCE_REVISION_ROLE": build.phase.rawValue
+                    ]
+                )
+            } catch {
+                if let videoSession {
+                    try? videoRecorder.stop(videoSession)
+                }
+                throw error
+            }
+
+            let recordedVideoPath = try finishVideoIfNeeded(
+                videoSession,
+                videoPlan: videoPlan,
+                phase: build.phase,
+                result: &result
             )
 
             if commandResult.exitCode != 0 {
@@ -153,7 +180,7 @@ public struct XcodeTestPlanExecutor: EvidencePlanExecuting {
                 break
             }
 
-            for step in steps(in: request.plan, for: build.phase) {
+            for step in phaseSteps {
                 let timestamp = timestamp()
                 let artifactURL = try artifactURL(
                     for: step,
@@ -161,7 +188,11 @@ public struct XcodeTestPlanExecutor: EvidencePlanExecuting {
                     outputDirectory: request.outputDirectory,
                     fallbackExtension: fallbackExtension(for: step.kind)
                 )
-                let artifactPath = artifactURL?.path
+                let artifactPath = artifactPath(
+                    for: step,
+                    defaultPath: artifactURL?.path,
+                    recordedVideoPath: recordedVideoPath
+                )
                 if step.kind == .screenshot, let artifactPath {
                     result.artifacts.append(artifactWriter.artifact(
                         kind: .screenshot,
@@ -185,6 +216,48 @@ public struct XcodeTestPlanExecutor: EvidencePlanExecuting {
         }
 
         return result
+    }
+
+    private func startVideoIfNeeded(
+        _ videoPlan: VideoCapturePlan?,
+        ios: PRChangeEvidenceIOSSettings
+    ) throws -> VideoRecordingSession? {
+        guard let videoPlan else { return nil }
+        let udid = try recordingUDID(for: ios)
+        return try videoRecorder.start(udid: udid, outputURL: videoPlan.outputURL)
+    }
+
+    private func finishVideoIfNeeded(
+        _ session: VideoRecordingSession?,
+        videoPlan: VideoCapturePlan?,
+        phase: PRChangeEvidencePhase,
+        result: inout EvidenceRunResult
+    ) throws -> String? {
+        guard let session, let videoPlan else { return nil }
+        try videoRecorder.stop(session)
+        let timestamp = timestamp()
+        result.artifacts.append(artifactWriter.artifact(
+            kind: .video,
+            phase: phase,
+            path: session.outputPath,
+            stepName: videoPlan.artifactStepName,
+            mediaType: mediaType(for: URL(fileURLWithPath: session.outputPath)),
+            capturedAt: timestamp
+        ))
+        return session.outputPath
+    }
+
+    private func artifactPath(
+        for step: PRChangeEvidenceStep,
+        defaultPath: String?,
+        recordedVideoPath: String?
+    ) -> String? {
+        switch step.kind {
+        case .startVideo, .stopVideo:
+            return recordedVideoPath ?? defaultPath
+        default:
+            return defaultPath
+        }
     }
 
     private func xcodebuildTestArguments(
@@ -230,6 +303,22 @@ public struct XcodeTestPlanExecutor: EvidencePlanExecuting {
             return "platform=iOS Simulator,name=\(name)"
         }
         return "platform=iOS Simulator"
+    }
+
+    private func recordingUDID(for ios: PRChangeEvidenceIOSSettings) throws -> String {
+        if let udid = ios.simulatorUDID?.nonEmpty {
+            return udid
+        }
+        if let destination = ios.destination?.nonEmpty,
+           let udid = destination
+            .split(separator: ",")
+            .map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+            .first(where: { $0.hasPrefix("id=") })?
+            .dropFirst(3),
+           !udid.isEmpty {
+            return String(udid)
+        }
+        throw CLIError.config("Invalid PR change evidence plan: XCTest video recording requires 'ios.simulator_udid' or an 'ios.destination' with an id=<UDID> segment.")
     }
 
     private func detail(from result: CommandResult) -> String {
@@ -515,6 +604,7 @@ public struct SimctlPlanExecutor: EvidencePlanExecuting {
             if let session = activeVideo {
                 try videoRecorder.stop(session)
                 activeVideo = nil
+                return session.outputPath
             }
             let outputURL = try requiredArtifactURL(
                 for: step,
@@ -590,6 +680,42 @@ private func steps(
     plan.steps.filter { step in
         step.phase == nil || step.phase == phase
     }
+}
+
+private struct VideoCapturePlan {
+    var outputURL: URL
+    var artifactStepName: String
+}
+
+private func videoCapturePlan(
+    in plan: PRChangeEvidencePlan,
+    steps: [PRChangeEvidenceStep],
+    phase: PRChangeEvidencePhase,
+    outputDirectory: URL
+) throws -> VideoCapturePlan? {
+    if let explicitStep = steps.first(where: { $0.kind == .startVideo })
+        ?? steps.first(where: { $0.kind == .stopVideo }) {
+        guard let outputURL = try artifactURL(
+            for: explicitStep,
+            phase: phase,
+            outputDirectory: outputDirectory,
+            fallbackExtension: "mov"
+        ) else {
+            return nil
+        }
+        let artifactStepName = steps.last(where: { $0.kind == .stopVideo })?.name ?? explicitStep.name
+        return VideoCapturePlan(outputURL: outputURL, artifactStepName: artifactStepName)
+    }
+
+    guard plan.video.enabled else {
+        return nil
+    }
+
+    let name = plan.video.name?.nonEmpty ?? "flow"
+    let outputURL = outputDirectory
+        .appendingPathComponent(phase.rawValue, isDirectory: true)
+        .appendingPathComponent("\(name).mov")
+    return VideoCapturePlan(outputURL: outputURL, artifactStepName: name)
 }
 
 private func artifactURL(
