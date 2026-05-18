@@ -341,6 +341,9 @@ public struct PRChangeEvidencePlan: Codable, Equatable {
             case .launch:
                 break
             case .wait:
+                if runner == .simctl, step.target?.isEmpty == false {
+                    throw CLIError.config("Invalid PR change evidence plan at \(planPath): invalid field '\(field).target': simctl wait steps cannot use accessibility targets; use 'seconds' for time-based waits or runner 'xctest' for accessibility waits.")
+                }
                 try require(
                     step.target?.isEmpty == false || step.seconds != nil,
                     planPath: planPath,

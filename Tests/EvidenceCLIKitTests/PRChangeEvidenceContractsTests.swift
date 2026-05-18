@@ -124,6 +124,32 @@ final class PRChangeEvidenceContractsTests: XCTestCase {
         }
     }
 
+    func testSimctlWaitRejectsAccessibilityTargets() throws {
+        let url = try writePlan("""
+        {
+          "repo": "ExampleOrg/ExampleApp",
+          "pr": 479,
+          "platform": "ios",
+          "runner": "simctl",
+          "steps": [
+            {
+              "name": "wait for home label",
+              "kind": "wait",
+              "target": { "staticText": "Home" }
+            }
+          ]
+        }
+        """)
+
+        XCTAssertThrowsError(try PRChangeEvidencePlan.load(from: url)) { error in
+            let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+            XCTAssertTrue(message.contains(url.path), "expected plan path in error: \(message)")
+            XCTAssertTrue(message.contains("steps[0].target"), "expected target field in error: \(message)")
+            XCTAssertTrue(message.contains("simctl wait steps cannot use accessibility targets"), "expected simctl target error: \(message)")
+            XCTAssertTrue(message.contains("seconds"), "expected time-based wait guidance: \(message)")
+        }
+    }
+
     func testManifestEncodesStableSnakeCaseContract() throws {
         let manifest = PRChangeEvidenceManifest(
             prNumber: 479,
