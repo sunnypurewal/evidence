@@ -161,6 +161,10 @@ The CLI wraps Xcode simulator tooling, ImageMagick, and ffmpeg with explicit che
 
 `capture-pr` resolves a pull request's before/after revisions and prepares two isolated worktrees under `<output>/worktrees/` without switching the root checkout. For open PRs it uses the current base and head SHAs; for merged PRs it uses the merge commit and its first parent when available. Pass `--before-ref` or `--after-ref` to override either side.
 
+For iOS plans, `capture-pr` then builds each revision from its own worktree using the plan's `ios.workspace` or `ios.project`, `ios.scheme`, `ios.configuration`, `ios.destination`, and optional `ios.extra_xcodebuild_arguments`. DerivedData is isolated by revision under `<output>/derived-data/before` and `<output>/derived-data/after`, and build logs are written under `<output>/logs/`. The manifest records each build command, exit code, duration, stdout/stderr excerpts, app bundle path, DerivedData path, and log path.
+
+Simulator preparation resolves the configured `ios.simulator_udid` or `ios.simulator`, boots and waits for the device, applies stable UI settings when the local simulator supports them, uninstalls the app by default to clear container state, installs the built app, and launches it with the plan's launch arguments and environment. Launch environment is injected as `SIMCTL_CHILD_<KEY>` variables for local simulator compatibility. Set `ios.preserve_simulator_state` to `true` only when the before/after comparison intentionally needs shared app container state.
+
 Use raw capture when the screenshot should show the app exactly as it runs. Use `render-marketing` when the App Store asset needs a composed layout with headlines, badges, metrics, timelines, device framing, or source text around app imagery.
 
 Marketing scenes are JSON files with app-owned copy and brand values. See `Examples/Marketing/scene.json` for a complete example using the supported row kinds: `left`, `right`, `badge`, `metric`, `timeline`, `stage`, `row`, and `compose`.

@@ -10,7 +10,7 @@ public enum RunnerCapability: String, Codable, Equatable {
     case simctl
 }
 
-public enum PRChangeEvidencePhase: String, Codable, Equatable {
+public enum PRChangeEvidencePhase: String, Codable, Equatable, Hashable {
     case before
     case after
 }
@@ -96,6 +96,8 @@ public struct PRChangeEvidenceIOSSettings: Codable, Equatable {
     public var destination: String?
     public var configuration: String?
     public var derivedDataPath: String?
+    public var extraBuildArguments: [String]
+    public var preserveSimulatorState: Bool
 
     public init(
         workspace: String? = nil,
@@ -106,7 +108,9 @@ public struct PRChangeEvidenceIOSSettings: Codable, Equatable {
         simulatorUDID: String? = nil,
         destination: String? = nil,
         configuration: String? = nil,
-        derivedDataPath: String? = nil
+        derivedDataPath: String? = nil,
+        extraBuildArguments: [String] = [],
+        preserveSimulatorState: Bool = false
     ) {
         self.workspace = workspace
         self.project = project
@@ -117,6 +121,47 @@ public struct PRChangeEvidenceIOSSettings: Codable, Equatable {
         self.destination = destination
         self.configuration = configuration
         self.derivedDataPath = derivedDataPath
+        self.extraBuildArguments = extraBuildArguments
+        self.preserveSimulatorState = preserveSimulatorState
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let dynamicContainer = try decoder.container(keyedBy: DynamicCodingKey.self)
+        self.workspace = try container.decodeIfPresent(String.self, forKey: .workspace)
+            ?? dynamicContainer.decodeIfPresent(String.self, forKey: .legacyWorkspace)
+        self.project = try container.decodeIfPresent(String.self, forKey: .project)
+            ?? dynamicContainer.decodeIfPresent(String.self, forKey: .legacyProject)
+        self.scheme = try container.decodeIfPresent(String.self, forKey: .scheme)
+        self.bundleID = try container.decodeIfPresent(String.self, forKey: .bundleID)
+        self.simulator = try container.decodeIfPresent(String.self, forKey: .simulator)
+        self.simulatorUDID = try container.decodeIfPresent(String.self, forKey: .simulatorUDID)
+        self.destination = try container.decodeIfPresent(String.self, forKey: .destination)
+        self.configuration = try container.decodeIfPresent(String.self, forKey: .configuration)
+        self.derivedDataPath = try container.decodeIfPresent(String.self, forKey: .derivedDataPath)
+        self.extraBuildArguments = try container.decodeIfPresent([String].self, forKey: .extraBuildArguments)
+            ?? dynamicContainer.decodeIfPresent([String].self, forKey: .legacyExtraBuildArguments)
+            ?? []
+        self.preserveSimulatorState = try container.decodeIfPresent(Bool.self, forKey: .preserveSimulatorState) ?? false
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(workspace, forKey: .workspace)
+        try container.encodeIfPresent(project, forKey: .project)
+        try container.encodeIfPresent(scheme, forKey: .scheme)
+        try container.encodeIfPresent(bundleID, forKey: .bundleID)
+        try container.encodeIfPresent(simulator, forKey: .simulator)
+        try container.encodeIfPresent(simulatorUDID, forKey: .simulatorUDID)
+        try container.encodeIfPresent(destination, forKey: .destination)
+        try container.encodeIfPresent(configuration, forKey: .configuration)
+        try container.encodeIfPresent(derivedDataPath, forKey: .derivedDataPath)
+        if !extraBuildArguments.isEmpty {
+            try container.encode(extraBuildArguments, forKey: .extraBuildArguments)
+        }
+        if preserveSimulatorState {
+            try container.encode(preserveSimulatorState, forKey: .preserveSimulatorState)
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -129,6 +174,26 @@ public struct PRChangeEvidenceIOSSettings: Codable, Equatable {
         case destination
         case configuration
         case derivedDataPath = "derived_data_path"
+        case extraBuildArguments = "extra_build_arguments"
+        case preserveSimulatorState = "preserve_simulator_state"
+    }
+
+    private struct DynamicCodingKey: CodingKey {
+        var stringValue: String
+        var intValue: Int?
+
+        init(stringValue: String) {
+            self.stringValue = stringValue
+        }
+
+        init?(intValue: Int) {
+            self.stringValue = "\(intValue)"
+            self.intValue = intValue
+        }
+
+        static let legacyWorkspace = DynamicCodingKey(stringValue: "xcode_" + "workspace")
+        static let legacyProject = DynamicCodingKey(stringValue: "xcode_" + "project")
+        static let legacyExtraBuildArguments = DynamicCodingKey(stringValue: "extra_" + "xcode" + "build_arguments")
     }
 }
 
@@ -492,6 +557,52 @@ public struct PRChangeEvidenceBuildResult: Codable, Equatable {
     }
 }
 
+public struct RevisionBuildResult: Codable, Equatable {
+    public var phase: PRChangeEvidencePhase
+    public var command: [String]
+    public var exitCode: Int32
+    public var durationSeconds: Double
+    public var stdoutExcerpt: String
+    public var stderrExcerpt: String
+    public var appBundlePath: String
+    public var derivedDataPath: String
+    public var logPath: String
+
+    public init(
+        phase: PRChangeEvidencePhase,
+        command: [String],
+        exitCode: Int32,
+        durationSeconds: Double,
+        stdoutExcerpt: String,
+        stderrExcerpt: String,
+        appBundlePath: String,
+        derivedDataPath: String,
+        logPath: String
+    ) {
+        self.phase = phase
+        self.command = command
+        self.exitCode = exitCode
+        self.durationSeconds = durationSeconds
+        self.stdoutExcerpt = stdoutExcerpt
+        self.stderrExcerpt = stderrExcerpt
+        self.appBundlePath = appBundlePath
+        self.derivedDataPath = derivedDataPath
+        self.logPath = logPath
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case phase
+        case command
+        case exitCode = "exit_code"
+        case durationSeconds = "duration_seconds"
+        case stdoutExcerpt = "stdout_excerpt"
+        case stderrExcerpt = "stderr_excerpt"
+        case appBundlePath = "app_bundle_path"
+        case derivedDataPath = "derived_data_path"
+        case logPath = "log_path"
+    }
+}
+
 public struct CapturedArtifact: Codable, Equatable {
     public enum Kind: String, Codable, Equatable {
         case screenshot
@@ -561,6 +672,7 @@ public struct PRChangeEvidenceManifest: Codable, Equatable {
     public var simulator: PRChangeEvidenceSimulator?
     public var xcodeDestination: String?
     public var buildResult: PRChangeEvidenceBuildResult
+    public var revisionBuilds: [RevisionBuildResult]
     public var artifacts: [CapturedArtifact]
     public var startedAt: String
     public var completedAt: String?
@@ -585,6 +697,7 @@ public struct PRChangeEvidenceManifest: Codable, Equatable {
         simulator: PRChangeEvidenceSimulator? = nil,
         xcodeDestination: String? = nil,
         buildResult: PRChangeEvidenceBuildResult,
+        revisionBuilds: [RevisionBuildResult] = [],
         artifacts: [CapturedArtifact],
         startedAt: String,
         completedAt: String? = nil,
@@ -608,6 +721,7 @@ public struct PRChangeEvidenceManifest: Codable, Equatable {
         self.simulator = simulator
         self.xcodeDestination = xcodeDestination
         self.buildResult = buildResult
+        self.revisionBuilds = revisionBuilds
         self.artifacts = artifacts
         self.startedAt = startedAt
         self.completedAt = completedAt
@@ -633,6 +747,7 @@ public struct PRChangeEvidenceManifest: Codable, Equatable {
         case simulator
         case xcodeDestination = "xcode_destination"
         case buildResult = "build_result"
+        case revisionBuilds = "revision_builds"
         case artifacts
         case startedAt = "started_at"
         case completedAt = "completed_at"

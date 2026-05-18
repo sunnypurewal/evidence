@@ -146,6 +146,40 @@ final class PullRequestComparisonTests: XCTestCase {
         }
     }
 
+    func testCapturePRRequiresTheRequestedPlanFileBeforePreparingWorktrees() throws {
+        let directory = try temporaryDirectory(writePlan: false)
+        let output = directory.appendingPathComponent("proof/pr-missing-plan", isDirectory: true)
+        let runner = PRComparisonRunner(
+            ghResult: .success(Self.pullRequestJSON(
+                state: "OPEN",
+                baseSHA: "1212121212121212121212121212121212121212",
+                headSHA: "3434343434343434343434343434343434343434"
+            )),
+            resolvedRefs: [
+                "1212121212121212121212121212121212121212^{commit}": "1212121212121212121212121212121212121212",
+                "3434343434343434343434343434343434343434^{commit}": "3434343434343434343434343434343434343434"
+            ]
+        )
+        let cli = testCLI(directory: directory, runner: runner)
+
+        XCTAssertThrowsError(try cli.execute([
+            "capture-pr",
+            "--repo", "RiddimSoftware/epac",
+            "--pr", "24",
+            "--plan", ".evidence/missing.json",
+            "--output", output.path
+        ])) { error in
+            guard case .config(let message) = (error as? CLIError) else {
+                return XCTFail("expected config, got \(error)")
+            }
+            XCTAssertTrue(message.contains("Missing PR change evidence plan"))
+            XCTAssertTrue(message.contains(".evidence/missing.json"))
+        }
+
+        XCTAssertTrue(runner.commands.isEmpty, "capture-pr should validate the requested plan before running gh or git commands")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: output.appendingPathComponent("manifest.json").path))
+    }
+
     func testCapturePRSurfacesMissingExplicitRefSeparately() throws {
         let directory = try temporaryDirectory()
         let output = directory.appendingPathComponent("proof/pr-20", isDirectory: true)
@@ -302,11 +336,39 @@ final class PullRequestComparisonTests: XCTestCase {
         )
     }
 
-    private func temporaryDirectory() throws -> URL {
+    private func temporaryDirectory(writePlan: Bool = true) throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if writePlan {
+            try Self.writePlan(in: directory)
+        }
         return directory
+    }
+
+    private static func writePlan(in directory: URL) throws {
+        let planDirectory = directory.appendingPathComponent(".evidence", isDirectory: true)
+        try FileManager.default.createDirectory(at: planDirectory, withIntermediateDirectories: true)
+        let planURL = planDirectory.appendingPathComponent("pr-home.json")
+        let json = """
+        {
+          "repo": "RiddimSoftware/epac",
+          "pr": 1,
+          "platform": "ios",
+          "runner": "simctl",
+          "ios": {
+            "project": "App.xcodeproj",
+            "scheme": "App",
+            "bundle_id": "com.example.app",
+            "simulator_udid": "SIM-PR",
+            "destination": "platform=iOS Simulator,id=SIM-PR"
+          },
+          "steps": [
+            { "name": "launch", "kind": "launch" }
+          ]
+        }
+        """
+        try json.write(to: planURL, atomically: true, encoding: .utf8)
     }
 
     private static func pullRequestJSON(

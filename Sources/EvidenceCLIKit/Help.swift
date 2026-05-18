@@ -185,11 +185,16 @@ public enum Help {
     public static let capturePR = """
     evidence capture-pr --repo <owner/repo> --pr <number> --plan <json> --output <dir> [--before-ref <ref>] [--after-ref <ref>]
 
-    Resolves pull request before/after revisions, writes a manifest, and
-    prepares two isolated Git worktrees:
+    Resolves pull request before/after revisions, prepares two isolated Git
+    worktrees, builds both iOS revisions, installs each onto a simulator with
+    clean app container state by default, and writes a manifest:
 
       <output>/worktrees/before-<shortsha>
       <output>/worktrees/after-<shortsha>
+      <output>/derived-data/before
+      <output>/derived-data/after
+      <output>/logs/build-before.log
+      <output>/logs/build-after.log
       <output>/manifest.json
 
     Defaults:
@@ -199,9 +204,22 @@ public enum Help {
     Explicit refs override defaults and are resolved to commits before
     worktrees are created.
 
+    iOS plan keys:
+      ios.workspace or ios.project
+      ios.scheme
+      ios.bundle_id
+      ios.destination, ios.simulator_udid, or ios.simulator
+      ios.configuration                         (optional)
+      ios.extra_xcodebuild_arguments            (optional)
+      ios.preserve_simulator_state = true       (optional; default false)
+
+    Launch environment entries are injected via SIMCTL_CHILD_<KEY> variables
+    for portability across local simulator versions.
+
     Requires:
       gh
       git
+      xcrun/xcodebuild/simctl
 
     Example:
       evidence capture-pr --repo RiddimSoftware/epac --pr 479 --plan .evidence/pr-home.json --output docs/evidence/pr-479

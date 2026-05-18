@@ -15,6 +15,26 @@ public struct CommandResult: Equatable {
 public protocol CommandRunning {
     @discardableResult
     func run(_ executable: String, _ arguments: [String]) throws -> CommandResult
+
+    @discardableResult
+    func run(
+        _ executable: String,
+        _ arguments: [String],
+        workingDirectory: URL?,
+        environment: [String: String]
+    ) throws -> CommandResult
+}
+
+public extension CommandRunning {
+    @discardableResult
+    func run(
+        _ executable: String,
+        _ arguments: [String],
+        workingDirectory: URL?,
+        environment: [String: String]
+    ) throws -> CommandResult {
+        try run(executable, arguments)
+    }
 }
 
 public struct ProcessCommandRunner: CommandRunning {
@@ -22,9 +42,23 @@ public struct ProcessCommandRunner: CommandRunning {
 
     @discardableResult
     public func run(_ executable: String, _ arguments: [String]) throws -> CommandResult {
+        try run(executable, arguments, workingDirectory: nil, environment: [:])
+    }
+
+    @discardableResult
+    public func run(
+        _ executable: String,
+        _ arguments: [String],
+        workingDirectory: URL?,
+        environment: [String: String]
+    ) throws -> CommandResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
+        process.currentDirectoryURL = workingDirectory
+        if !environment.isEmpty {
+            process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
+        }
 
         let stdout = Pipe()
         let stderr = Pipe()

@@ -604,24 +604,16 @@ public struct EvidenceCLI {
             throw CLIError.usage("Invalid value for --pr '\(prValue)'. Expected a positive pull request number.")
         }
         let planPath = try option("plan", in: arguments)
+        let planURL = url(forPath: planPath)
         let outputDirectory = url(forPath: try option("output", in: arguments))
         let beforeRef = optionValue("before-ref", in: arguments)
         let afterRef = optionValue("after-ref", in: arguments)
 
-        let git = GitCLIRepositoryPreparer(
+        let capture = CapturePREvidenceRuntime.make(
             fileManager: fileManager,
             runner: runner,
-            gitPath: toolPaths.git,
-            repositoryRoot: currentDirectory
-        )
-        let metadataProvider = GitHubCLIPullRequestMetadataProvider(
-            runner: runner,
-            ghPath: toolPaths.gh
-        )
-        let capture = CapturePullRequestEvidence(
-            resolver: ResolvePullRequestComparison(metadataProvider: metadataProvider, git: git),
-            worktreePreparer: PrepareComparisonWorktrees(git: git),
-            fileManager: fileManager,
+            currentDirectory: currentDirectory,
+            toolPaths: toolPaths,
             clock: clock
         )
 
@@ -630,6 +622,7 @@ public struct EvidenceCLI {
                 repo: repo,
                 pr: pr,
                 planPath: planPath,
+                planURL: planURL,
                 outputDirectory: outputDirectory,
                 beforeRef: beforeRef,
                 afterRef: afterRef

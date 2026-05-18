@@ -177,14 +177,24 @@ public struct CapturePullRequestEvidenceInput {
     public var repo: String
     public var pr: Int
     public var planPath: String
+    public var planURL: URL
     public var outputDirectory: URL
     public var beforeRef: String?
     public var afterRef: String?
 
-    public init(repo: String, pr: Int, planPath: String, outputDirectory: URL, beforeRef: String?, afterRef: String?) {
+    public init(
+        repo: String,
+        pr: Int,
+        planPath: String,
+        planURL: URL? = nil,
+        outputDirectory: URL,
+        beforeRef: String?,
+        afterRef: String?
+    ) {
         self.repo = repo
         self.pr = pr
         self.planPath = planPath
+        self.planURL = planURL ?? URL(fileURLWithPath: planPath)
         self.outputDirectory = outputDirectory
         self.beforeRef = beforeRef
         self.afterRef = afterRef
@@ -194,17 +204,23 @@ public struct CapturePullRequestEvidenceInput {
 public struct CapturePullRequestEvidence {
     public var resolver: ResolvePullRequestComparison
     public var worktreePreparer: PrepareComparisonWorktrees
+    public var revisionBuilder: BuildRevisionForEvidence?
+    public var simulatorPreparer: PrepareSimulatorForEvidenceRun?
     public var fileManager: FileManager
     public var clock: any EvidenceClock
 
     public init(
         resolver: ResolvePullRequestComparison,
         worktreePreparer: PrepareComparisonWorktrees,
+        revisionBuilder: BuildRevisionForEvidence? = nil,
+        simulatorPreparer: PrepareSimulatorForEvidenceRun? = nil,
         fileManager: FileManager = .default,
         clock: any EvidenceClock = SystemEvidenceClock()
     ) {
         self.resolver = resolver
         self.worktreePreparer = worktreePreparer
+        self.revisionBuilder = revisionBuilder
+        self.simulatorPreparer = simulatorPreparer
         self.fileManager = fileManager
         self.clock = clock
     }
@@ -212,6 +228,7 @@ public struct CapturePullRequestEvidence {
     @discardableResult
     public func execute(_ input: CapturePullRequestEvidenceInput) throws -> PRChangeEvidenceManifest {
         try fileManager.createDirectory(at: input.outputDirectory, withIntermediateDirectories: true)
+        let plan = try loadPlan(from: input.planURL)
 
         let resolution = try resolver.execute(
             repo: input.repo,
@@ -224,6 +241,73 @@ public struct CapturePullRequestEvidence {
             outputDirectory: input.outputDirectory
         )
         let timestamp = ISO8601DateFormatter().string(from: clock.now())
+        let iosSettings = plan.platform == .ios ? plan.ios : nil
+        var revisionBuilds: [RevisionBuildResult] = []
+        var simulator: PRChangeEvidenceSimulator?
+        var failures: [PRChangeEvidenceFailureSummary] = []
+        var terminalError: CLIError?
+        var buildStatus: PRChangeEvidenceBuildResult.Status = .skipped
+        var buildLogPath: String?
+        var buildDuration: Double?
+        var artifacts: [CapturedArtifact] = [
+            CapturedArtifact(
+                kind: .manifest,
+                path: input.outputDirectory.appendingPathComponent("manifest.json").path
+            )
+        ]
+
+        if let ios = iosSettings, let revisionBuilder {
+            for worktree in worktrees {
+                let phase = PRChangeEvidencePhase(worktree.label)
+                let result = try revisionBuilder.execute(
+                    RevisionBuildRequest(
+                        phase: phase,
+                        worktree: worktree,
+                        ios: ios,
+                        outputDirectory: input.outputDirectory
+                    )
+                )
+                revisionBuilds.append(result)
+
+                if result.exitCode != 0 {
+                    let message = Self.buildFailureMessage(result)
+                    failures.append(PRChangeEvidenceFailureSummary(message: message, artifactPath: result.logPath))
+                    terminalError = CLIError.commandFailed(message)
+                    break
+                }
+            }
+
+            buildStatus = revisionBuilds.contains { $0.exitCode != 0 } ? .failed : .succeeded
+            buildLogPath = input.outputDirectory.appendingPathComponent("logs", isDirectory: true).path
+            buildDuration = revisionBuilds.reduce(0) { $0 + $1.durationSeconds }
+            artifacts = revisionBuilds.map {
+                CapturedArtifact(kind: .log, phase: $0.phase, path: $0.logPath, stepName: "\($0.phase.rawValue) build")
+            } + artifacts
+
+            if terminalError == nil, let simulatorPreparer {
+                do {
+                    simulator = try simulatorPreparer.execute(
+                        ios: ios,
+                        launch: plan.launch,
+                        builds: revisionBuilds
+                    )
+                } catch let error as CLIError {
+                    let message = error.errorDescription ?? String(describing: error)
+                    failures.append(PRChangeEvidenceFailureSummary(message: message))
+                    terminalError = error
+                } catch {
+                    let message = String(describing: error)
+                    failures.append(PRChangeEvidenceFailureSummary(message: message))
+                    terminalError = CLIError.commandFailed(message)
+                }
+            }
+        } else if plan.platform == .ios, plan.ios == nil {
+            terminalError = CLIError.config("Invalid PR change evidence plan at \(input.planURL.path): missing required field 'ios' for platform 'ios'.")
+            if let terminalError {
+                failures.append(PRChangeEvidenceFailureSummary(message: terminalError.errorDescription ?? String(describing: terminalError)))
+            }
+        }
+
         let manifest = PRChangeEvidenceManifest(
             prNumber: input.pr,
             prURL: resolution.metadata.url,
@@ -248,16 +332,19 @@ public struct CapturePullRequestEvidence {
             },
             planPath: input.planPath,
             command: manifestCommand(for: input),
-            runnerMode: .xctest,
-            buildResult: PRChangeEvidenceBuildResult(status: .skipped),
-            artifacts: [
-                CapturedArtifact(
-                    kind: .manifest,
-                    path: input.outputDirectory.appendingPathComponent("manifest.json").path
-                )
-            ],
+            runnerMode: plan.runner,
+            simulator: simulator,
+            xcodeDestination: iosSettings?.destination,
+            buildResult: PRChangeEvidenceBuildResult(
+                status: buildStatus,
+                logPath: buildLogPath,
+                durationSeconds: buildDuration
+            ),
+            revisionBuilds: revisionBuilds,
+            artifacts: artifacts,
             startedAt: timestamp,
             completedAt: timestamp,
+            failures: failures,
             worktrees: worktrees
         )
 
@@ -267,7 +354,22 @@ public struct CapturePullRequestEvidence {
             to: input.outputDirectory.appendingPathComponent("manifest.json"),
             options: [.atomic]
         )
+        if let terminalError {
+            throw terminalError
+        }
         return manifest
+    }
+
+    private func loadPlan(from url: URL) throws -> PRChangeEvidencePlan {
+        guard fileManager.fileExists(atPath: url.path) else {
+            throw CLIError.config("Missing PR change evidence plan at \(url.path).")
+        }
+        return try PRChangeEvidencePlan.load(from: url)
+    }
+
+    private static func buildFailureMessage(_ result: RevisionBuildResult) -> String {
+        let detail = result.stderrExcerpt.nonEmpty ?? result.stdoutExcerpt.nonEmpty ?? "See \(result.logPath)."
+        return "\(result.phase.rawValue) build failed with exit code \(result.exitCode). \(detail)"
     }
 
     private func manifestCommand(for input: CapturePullRequestEvidenceInput) -> [String] {
@@ -489,6 +591,17 @@ private struct WorktreeMarker: Codable {
     var label: ComparisonWorktreeLabel
     var sha: String
     var path: String
+}
+
+private extension PRChangeEvidencePhase {
+    init(_ label: ComparisonWorktreeLabel) {
+        switch label {
+        case .before:
+            self = .before
+        case .after:
+            self = .after
+        }
+    }
 }
 
 private extension String {

@@ -95,6 +95,33 @@ final class PRChangeEvidenceContractsTests: XCTestCase {
         XCTAssertEqual(plan.steps[1].seconds, 1)
     }
 
+    func testPlanParsesIOSBuildAliasesAndSimulatorStateOptions() throws {
+        let url = try writePlan("""
+        {
+          "repo": "RiddimSoftware/evidence",
+          "pr": 2,
+          "platform": "ios",
+          "ios": {
+            "xcode_workspace": "ios/AliasApp.xcworkspace",
+            "scheme": "AliasApp",
+            "bundle_id": "com.example.alias",
+            "simulator_udid": "SIM-ALIAS",
+            "extra_xcodebuild_arguments": ["CODE_SIGNING_ALLOWED=NO"],
+            "preserve_simulator_state": true
+          },
+          "steps": [
+            { "name": "launch", "kind": "launch" }
+          ]
+        }
+        """)
+
+        let plan = try PRChangeEvidencePlan.load(from: url)
+
+        XCTAssertEqual(plan.ios?.workspace, "ios/AliasApp.xcworkspace")
+        XCTAssertEqual(plan.ios?.extraBuildArguments, ["CODE_SIGNING_ALLOWED=NO"])
+        XCTAssertEqual(plan.ios?.preserveSimulatorState, true)
+    }
+
     func testRunnerCapabilitiesAreExplicitAndValidated() throws {
         XCTAssertTrue(PRChangeEvidenceStep.Kind.tap.supportedRunners.contains(.xctest))
         XCTAssertFalse(PRChangeEvidenceStep.Kind.tap.supportedRunners.contains(.simctl))
