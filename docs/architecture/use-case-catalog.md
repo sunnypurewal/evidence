@@ -160,7 +160,7 @@ Goal: Convert before/after artifacts, build results, and comparison metadata
 into a concise report that reviewers can read in a pull request.
 
 Inputs: `PullRequestComparison`, before/after artifacts, build/test summaries,
-diff results, repository raw URL settings, and timestamp.
+comparison results, repository raw URL settings, and timestamp.
 
 Outputs: Markdown report body, local report file, and optional GitHub comment
 payload.

@@ -22,19 +22,12 @@ This folder ships ready-to-copy GitHub Actions workflows that exercise the
   starts a local web server, runs `evidence capture-web` on every pull request,
   and posts the captured viewport screenshots as a PR comment.
 
-## Fixture project
-
-The `fixture-project/` directory ships a minimal `.evidence.toml` against
-which the Action's self-test workflow validates `actionlint`, the `--help`
-surface of the CLI, and the input wiring. It is not a full Xcode project —
-real CI users supply their own app.
-
 ## PR evidence plan
 
 [`pr-change-evidence-plan.json`](pr-change-evidence-plan.json) is a generic
-`capture-pr` plan fixture. Copy it into an app repository, replace the
-placeholder repo, PR number, scheme, bundle ID, project/workspace, simulator,
-and URL values, then point the workflow `plan:` input at that app-owned copy.
+`capture-pr` plan fixture. Copy it into an app repository, replace the sample
+repo, PR number, scheme, bundle ID, project/workspace, simulator, and URL
+values, then point the workflow `plan:` input at that app-owned copy.
 The sample uses the launch-only `simctl` runner so it avoids app-specific XCTest
 targets; richer taps, typing, swipes, or accessibility waits require an
 app-side XCTest Evidence harness.

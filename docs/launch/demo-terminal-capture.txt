@@ -11,26 +11,23 @@ cd evidence
 swift run evidence -- --help
 
 # 12s - show the app-owned config model
-sed -n '1,80p' README.md
+sed -n '1,120p' README.md
 
-# 22s - show the screenshot-plan API
+# 24s - show the screenshot-plan API
 sed -n '1,120p' Sources/Evidence/ScreenshotPlan.swift
 
-# 34s - show visual diff support
-swift run evidence -- diff --help
+# 36s - show before/after PR evidence support
+swift run evidence -- capture-pr --help
 
-# 44s - show App Store upload planning
-swift run evidence -- upload-screenshots --help
-
-# 54s - show CI adoption path
-sed -n '1,120p' Examples/workflows/capture-evidence-on-pr.yml
+# 48s - show CI adoption path
+sed -n '1,120p' Examples/workflows/capture-pr-on-pr.yml
 ```
 
 ## Caption
 
-`evidence` turns real iOS app flows into repeatable release proof: screenshots, build evidence, visual diffs, and App Store screenshot upload plans from one open-source Swift package and CLI.
+`evidence` turns real app runs into repeatable proof artifacts: screenshots, videos, manifests, and reviewer-facing reports from one open-source Swift package and CLI.
 
-## Checklist for recording
+## Recording Checklist
 
 - Use a clean terminal theme with 14-16pt monospace text.
 - Keep the window around 120 columns wide so README and help output wrap cleanly.

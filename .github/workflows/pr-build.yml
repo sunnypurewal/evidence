@@ -13,7 +13,7 @@ permissions:
 jobs:
   pr-build:
     name: pr-build
-    runs-on: [self-hosted, macOS]
+    runs-on: macos-14
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

@@ -23,7 +23,7 @@ public enum Help {
 
     Examples:
       evidence capture-evidence --ticket APP-123
-      evidence capture-pr --repo RiddimSoftware/app --pr 123 --plan .evidence/pr-home.json --output docs/evidence/pr-123
+      evidence capture-pr --repo ExampleOrg/ExampleApp --pr 123 --plan .evidence/pr-home.json --output docs/evidence/pr-123
       evidence resize --input raw.png --target 6.9 --output app-store.png
       evidence upload-screenshots --dry-run
     """
@@ -233,7 +233,7 @@ public enum Help {
       xcrun/xcodebuild/simctl
 
     Example:
-      evidence capture-pr --repo RiddimSoftware/epac --pr 479 --plan .evidence/pr-home.json --output docs/evidence/pr-479
+      evidence capture-pr --repo ExampleOrg/ExampleApp --pr 123 --plan .evidence/pr-home.json --output docs/evidence/pr-123
     """
 
     public static func text(for command: String) throws -> String {

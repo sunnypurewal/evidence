@@ -1,15 +1,10 @@
 # Launch Checklist
 
-Launch timing: set before publishing.
-
 Primary URL: <https://github.com/RiddimSoftware/evidence>
-
-Blog URL placeholder: `https://example.com/blog/introducing-evidence`
 
 ## Pre-Launch
 
-- Replace the blog URL placeholder in `x-thread.md` with the final published blog URL.
-- Record the terminal demo using `demo-terminal-capture.txt`.
+- Confirm the repository is ready to be made public after the hygiene PR merges.
 - Confirm the README quick start still works:
 
 ```sh
@@ -17,19 +12,26 @@ swift test
 swift run evidence -- --help
 ```
 
+- Confirm workflow lint passes:
+
+```sh
+actionlint .github/workflows/*.yml Examples/workflows/*.yml
+```
+
 - Confirm the GitHub Marketplace listing points to the current README.
-- Confirm all social drafts point at the same canonical blog URL and GitHub repo URL.
-- Prepare one screenshot or short GIF for the blog and X/Twitter thread.
+- Confirm repository metadata matches [`docs/repository-metadata.md`](../repository-metadata.md).
+- Prepare one screenshot or short GIF for the article and X/Twitter thread.
 
 ## Launch Window
 
-1. Publish the blog post from `introducing-evidence.md`.
-2. Update `x-thread.md` with the final blog URL.
-3. Post the X/Twitter thread.
-4. Publish the dev.to cross-post from `devto-cross-post.md`.
-5. Submit the Hacker News post using the recommended title in `hacker-news.md`.
-6. Add the first HN comment from `hacker-news.md`.
-7. Watch replies for setup friction, confusing positioning, and missing examples.
+1. Change the repository visibility to public.
+2. Verify the license badge, description, topics, and homepage in GitHub settings.
+3. Publish the launch article.
+4. Post the X/Twitter thread.
+5. Publish the dev.to cross-post.
+6. Submit the Hacker News post.
+7. Add the first HN comment from `hacker-news.md`.
+8. Watch replies for setup friction, confusing positioning, and missing examples.
 
 ## Follow-Up
 

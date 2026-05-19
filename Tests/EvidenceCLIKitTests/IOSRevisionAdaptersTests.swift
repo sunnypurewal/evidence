@@ -28,7 +28,7 @@ final class IOSRevisionAdaptersTests: XCTestCase {
 
         try cli.execute([
             "capture-pr",
-            "--repo", "RiddimSoftware/example",
+            "--repo", "ExampleOrg/ExampleApp",
             "--pr", "50",
             "--plan", planURL.path,
             "--output", output.path
@@ -68,7 +68,7 @@ final class IOSRevisionAdaptersTests: XCTestCase {
         let directory = try temporaryDirectory()
         let output = directory.appendingPathComponent("proof/pr-54", isDirectory: true)
         let plan = PRChangeEvidencePlan(
-            repo: "RiddimSoftware/example",
+            repo: "ExampleOrg/ExampleApp",
             pr: 54,
             platform: .ios,
             runner: .xctest,
@@ -172,7 +172,7 @@ final class IOSRevisionAdaptersTests: XCTestCase {
 
         try cli.execute([
             "capture-pr",
-            "--repo", "RiddimSoftware/example",
+            "--repo", "ExampleOrg/ExampleApp",
             "--pr", "51",
             "--plan", planURL.path,
             "--output", output.path
@@ -224,7 +224,7 @@ final class IOSRevisionAdaptersTests: XCTestCase {
 
         XCTAssertThrowsError(try cli.execute([
             "capture-pr",
-            "--repo", "RiddimSoftware/example",
+            "--repo", "ExampleOrg/ExampleApp",
             "--pr", "52",
             "--plan", planURL.path,
             "--output", output.path
@@ -256,7 +256,7 @@ final class IOSRevisionAdaptersTests: XCTestCase {
         let directory = try temporaryDirectory()
         let output = directory.appendingPathComponent("proof/pr-53", isDirectory: true)
         let plan = PRChangeEvidencePlan(
-            repo: "RiddimSoftware/example",
+            repo: "ExampleOrg/ExampleApp",
             pr: 53,
             platform: .ios,
             runner: .simctl,
@@ -318,7 +318,7 @@ final class IOSRevisionAdaptersTests: XCTestCase {
         let directory = try temporaryDirectory()
         let output = directory.appendingPathComponent("proof/pr-55", isDirectory: true)
         let plan = PRChangeEvidencePlan(
-            repo: "RiddimSoftware/example",
+            repo: "ExampleOrg/ExampleApp",
             pr: 55,
             platform: .ios,
             runner: .simctl,
@@ -385,7 +385,7 @@ final class IOSRevisionAdaptersTests: XCTestCase {
 
         try cli.execute([
             "capture-pr",
-            "--repo", "RiddimSoftware/example",
+            "--repo", "ExampleOrg/ExampleApp",
             "--pr", "44",
             "--plan", planURL.path,
             "--output", output.path
@@ -442,7 +442,7 @@ final class IOSRevisionAdaptersTests: XCTestCase {
 
         try cli.execute([
             "capture-pr",
-            "--repo", "RiddimSoftware/example",
+            "--repo", "ExampleOrg/ExampleApp",
             "--pr", "45",
             "--plan", planURL.path,
             "--output", output.path
@@ -485,7 +485,7 @@ final class IOSRevisionAdaptersTests: XCTestCase {
 
         try cli.execute([
             "capture-pr",
-            "--repo", "RiddimSoftware/example",
+            "--repo", "ExampleOrg/ExampleApp",
             "--pr", "46",
             "--plan", planURL.path,
             "--output", output.path
@@ -516,7 +516,7 @@ final class IOSRevisionAdaptersTests: XCTestCase {
 
         XCTAssertThrowsError(try cli.execute([
             "capture-pr",
-            "--repo", "RiddimSoftware/example",
+            "--repo", "ExampleOrg/ExampleApp",
             "--pr", "47",
             "--plan", planURL.path,
             "--output", output.path
@@ -559,7 +559,7 @@ final class IOSRevisionAdaptersTests: XCTestCase {
 
         XCTAssertThrowsError(try cli.execute([
             "capture-pr",
-            "--repo", "RiddimSoftware/example",
+            "--repo", "ExampleOrg/ExampleApp",
             "--pr", "48",
             "--plan", planURL.path,
             "--output", output.path
@@ -611,7 +611,7 @@ final class IOSRevisionAdaptersTests: XCTestCase {
         let renderedSteps = steps.joined(separator: ",\n")
         let json = """
         {
-          "repo": "RiddimSoftware/example",
+          "repo": "ExampleOrg/ExampleApp",
           "pr": 44,
           "platform": "ios",
           "runner": "\(runner.rawValue)",
@@ -671,7 +671,7 @@ final class IOSRevisionAdaptersTests: XCTestCase {
     private static func pullRequestJSON(baseSHA: String, headSHA: String) -> String {
         """
         {
-          "url": "https://github.com/RiddimSoftware/example/pull/44",
+          "url": "https://github.com/ExampleOrg/ExampleApp/pull/44",
           "title": "Resolve visual evidence",
           "state": "OPEN",
           "baseRefName": "main",

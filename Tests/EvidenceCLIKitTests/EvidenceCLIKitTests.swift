@@ -483,7 +483,7 @@ final class EvidenceCLIKitTests: XCTestCase {
         {
           "testName": "testCheckoutCompletesPayment",
           "targetName": "ExampleAppTests",
-          "failureText": "/Users/ci/work/ExampleApp/Tests/CheckoutTests.swift:42: XCTAssertEqual failed: (\\"declined\\") is not equal to (\\"paid\\")",
+          "failureText": "/tmp/ci/work/ExampleApp/Tests/CheckoutTests.swift:42: XCTAssertEqual failed: (\\"declined\\") is not equal to (\\"paid\\")",
           "testIdentifier": 1,
           "testIdentifierString": "ExampleAppTests/testCheckoutCompletesPayment"
         }
@@ -510,7 +510,7 @@ final class EvidenceCLIKitTests: XCTestCase {
         let failure = try XCTUnwrap(summary.failures.first)
         XCTAssertEqual(failure.testName, "testCheckoutCompletesPayment")
         XCTAssertEqual(failure.targetName, "ExampleAppTests")
-        XCTAssertEqual(failure.fileLine, "/Users/ci/work/ExampleApp/Tests/CheckoutTests.swift:42")
+        XCTAssertEqual(failure.fileLine, "/tmp/ci/work/ExampleApp/Tests/CheckoutTests.swift:42")
     }
 
     func testXcresultMarkdownRendersHeadlineCountsAndFailureFileLine() throws {
@@ -524,7 +524,7 @@ final class EvidenceCLIKitTests: XCTestCase {
         XCTAssertTrue(markdown.contains("- Failed: 1"))
         XCTAssertTrue(markdown.contains("Duration: 20.00s"))
         XCTAssertTrue(markdown.contains("**testCheckoutCompletesPayment** (ExampleAppTests)"))
-        XCTAssertTrue(markdown.contains("`/Users/ci/work/ExampleApp/Tests/CheckoutTests.swift:42`"))
+        XCTAssertTrue(markdown.contains("`/tmp/ci/work/ExampleApp/Tests/CheckoutTests.swift:42`"))
     }
 
     func testCaptureEvidenceWithXcresultEnabledRunsXcodebuildAndWritesSummary() throws {
@@ -1416,8 +1416,7 @@ fileprivate final class RecordingRunner: CommandRunning {
             return CommandResult(exitCode: 0, stdout: stdout)
         }
 
-        // `git status --porcelain`, used by `evidence accept-baseline` to
-        // refuse running on a dirty tree. Default is empty (clean).
+        // `git status --porcelain` default is empty (clean).
         return CommandResult(exitCode: 0)
     }
 }

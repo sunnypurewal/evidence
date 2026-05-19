@@ -6,9 +6,8 @@ public enum CLIError: Error, Equatable, LocalizedError {
     case missingTool(String, installHint: String)
     case commandFailed(String)
     /// Surface a specific non-zero exit code without losing the human message.
-    /// Used by `evidence diff` to distinguish "diff exceeded threshold" (1)
-    /// from "baseline missing" (2), and by future subcommands that need
-    /// CI-stable exit codes.
+    /// Used by subcommands that need CI-stable exit codes while preserving a
+    /// readable error message.
     case exit(Int32, message: String)
 
     public var errorDescription: String? {

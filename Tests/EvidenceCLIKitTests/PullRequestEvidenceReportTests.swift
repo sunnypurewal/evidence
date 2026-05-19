@@ -22,13 +22,13 @@ final class PullRequestEvidenceReportTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: reportURL.path))
         XCTAssertEqual(report.markdown, try String(contentsOf: reportURL, encoding: .utf8))
         XCTAssertTrue(report.markdown.contains("# PR Change Evidence Report"))
-        XCTAssertTrue(report.markdown.contains("- Repository: `RiddimSoftware/example`"))
-        XCTAssertTrue(report.markdown.contains("- Pull request: [#77 Render evidence](https://github.com/RiddimSoftware/example/pull/77)"))
+        XCTAssertTrue(report.markdown.contains("- Repository: `ExampleOrg/ExampleApp`"))
+        XCTAssertTrue(report.markdown.contains("- Pull request: [#77 Render evidence](https://github.com/ExampleOrg/ExampleApp/pull/77)"))
         XCTAssertTrue(report.markdown.contains("- Before SHA: `1111111111111111111111111111111111111111`"))
         XCTAssertTrue(report.markdown.contains("- After SHA: `2222222222222222222222222222222222222222`"))
         XCTAssertTrue(report.markdown.contains("- Runner mode: `simctl`"))
         XCTAssertTrue(report.markdown.contains("- Simulator: `iPhone 17 Pro` (`SIM-123`)"))
-        XCTAssertTrue(report.markdown.contains("- Command: `evidence capture-pr --repo RiddimSoftware/example --pr 77`"))
+        XCTAssertTrue(report.markdown.contains("- Command: `evidence capture-pr --repo ExampleOrg/ExampleApp --pr 77`"))
         XCTAssertTrue(report.markdown.contains("- Started: `2026-05-18T00:00:00Z`"))
         XCTAssertTrue(report.markdown.contains("- Completed: `2026-05-18T00:02:00Z`"))
         XCTAssertTrue(report.markdown.contains("- Overall status: **succeeded**"))
@@ -197,7 +197,7 @@ final class PullRequestEvidenceReportTests: XCTestCase {
 
     private func comparisonPlan() -> PRChangeEvidencePlan {
         PRChangeEvidencePlan(
-            repo: "RiddimSoftware/example",
+            repo: "ExampleOrg/ExampleApp",
             pr: 77,
             platform: .ios,
             runner: .simctl,
@@ -214,15 +214,15 @@ final class PullRequestEvidenceReportTests: XCTestCase {
     private func successfulManifest(output: URL) -> PRChangeEvidenceManifest {
         PRChangeEvidenceManifest(
             prNumber: 77,
-            prURL: "https://github.com/RiddimSoftware/example/pull/77",
+            prURL: "https://github.com/ExampleOrg/ExampleApp/pull/77",
             prTitle: "Render evidence",
             prState: "OPEN",
             beforeSHA: "1111111111111111111111111111111111111111",
             afterSHA: "2222222222222222222222222222222222222222",
-            base: PRRevisionMetadata(repo: "RiddimSoftware/example", ref: "main", sha: "1111111111111111111111111111111111111111"),
-            head: PRRevisionMetadata(repo: "RiddimSoftware/example", ref: "feature/report", sha: "2222222222222222222222222222222222222222"),
+            base: PRRevisionMetadata(repo: "ExampleOrg/ExampleApp", ref: "main", sha: "1111111111111111111111111111111111111111"),
+            head: PRRevisionMetadata(repo: "ExampleOrg/ExampleApp", ref: "feature/report", sha: "2222222222222222222222222222222222222222"),
             planPath: ".evidence/pr-home.json",
-            command: ["evidence", "capture-pr", "--repo", "RiddimSoftware/example", "--pr", "77"],
+            command: ["evidence", "capture-pr", "--repo", "ExampleOrg/ExampleApp", "--pr", "77"],
             runnerMode: .simctl,
             simulator: PRChangeEvidenceSimulator(name: "iPhone 17 Pro", udid: "SIM-123"),
             xcodeDestination: "platform=iOS Simulator,id=SIM-123",

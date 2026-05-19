@@ -26,7 +26,7 @@ final class PullRequestComparisonTests: XCTestCase {
 
         try cli.execute([
             "capture-pr",
-            "--repo", "RiddimSoftware/epac",
+            "--repo", "ExampleOrg/ExampleApp",
             "--pr", "479",
             "--plan", ".evidence/pr-home.json",
             "--output", output.path
@@ -39,12 +39,12 @@ final class PullRequestComparisonTests: XCTestCase {
         )
 
         XCTAssertEqual(manifest.prNumber, 479)
-        XCTAssertEqual(manifest.prURL, "https://github.com/RiddimSoftware/epac/pull/479")
+        XCTAssertEqual(manifest.prURL, "https://github.com/ExampleOrg/ExampleApp/pull/479")
         XCTAssertEqual(manifest.prTitle, "Resolve visual evidence")
         XCTAssertEqual(manifest.prState, "MERGED")
-        XCTAssertEqual(manifest.base, PRRevisionMetadata(repo: "RiddimSoftware/epac", ref: "main", sha: "dddddddddddddddddddddddddddddddddddddddd"))
-        XCTAssertEqual(manifest.head, PRRevisionMetadata(repo: "RiddimSoftware/epac", ref: "feature/evidence", sha: headSHA))
-        XCTAssertEqual(manifest.merge, PRRevisionMetadata(repo: "RiddimSoftware/epac", ref: "refs/pull/479/merge", sha: mergeSHA))
+        XCTAssertEqual(manifest.base, PRRevisionMetadata(repo: "ExampleOrg/ExampleApp", ref: "main", sha: "dddddddddddddddddddddddddddddddddddddddd"))
+        XCTAssertEqual(manifest.head, PRRevisionMetadata(repo: "ExampleOrg/ExampleApp", ref: "feature/evidence", sha: headSHA))
+        XCTAssertEqual(manifest.merge, PRRevisionMetadata(repo: "ExampleOrg/ExampleApp", ref: "refs/pull/479/merge", sha: mergeSHA))
         XCTAssertEqual(manifest.beforeSHA, firstParentSHA)
         XCTAssertEqual(manifest.afterSHA, mergeSHA)
         XCTAssertEqual(manifest.worktrees.map(\.label), [.before, .after])
@@ -72,7 +72,7 @@ final class PullRequestComparisonTests: XCTestCase {
 
         try cli.execute([
             "capture-pr",
-            "--repo", "RiddimSoftware/epac",
+            "--repo", "ExampleOrg/ExampleApp",
             "--pr", "12",
             "--plan", ".evidence/pr-home.json",
             "--output", output.path
@@ -107,7 +107,7 @@ final class PullRequestComparisonTests: XCTestCase {
 
         try cli.execute([
             "capture-pr",
-            "--repo", "RiddimSoftware/epac",
+            "--repo", "ExampleOrg/ExampleApp",
             "--pr", "19",
             "--before-ref", "release-base",
             "--after-ref", "candidate-head",
@@ -133,7 +133,7 @@ final class PullRequestComparisonTests: XCTestCase {
 
         XCTAssertThrowsError(try cli.execute([
             "capture-pr",
-            "--repo", "RiddimSoftware/epac",
+            "--repo", "ExampleOrg/ExampleApp",
             "--pr", "404",
             "--plan", ".evidence/pr-home.json",
             "--output", output.path
@@ -142,7 +142,7 @@ final class PullRequestComparisonTests: XCTestCase {
                 return XCTFail("expected commandFailed, got \(error)")
             }
             XCTAssertTrue(message.contains("PR metadata resolution failed"))
-            XCTAssertTrue(message.contains("RiddimSoftware/epac#404"))
+            XCTAssertTrue(message.contains("ExampleOrg/ExampleApp#404"))
         }
     }
 
@@ -164,7 +164,7 @@ final class PullRequestComparisonTests: XCTestCase {
 
         XCTAssertThrowsError(try cli.execute([
             "capture-pr",
-            "--repo", "RiddimSoftware/epac",
+            "--repo", "ExampleOrg/ExampleApp",
             "--pr", "24",
             "--plan", ".evidence/missing.json",
             "--output", output.path
@@ -203,7 +203,7 @@ final class PullRequestComparisonTests: XCTestCase {
 
         XCTAssertThrowsError(try cli.execute([
             "capture-pr",
-            "--repo", "RiddimSoftware/epac",
+            "--repo", "ExampleOrg/ExampleApp",
             "--pr", "20",
             "--before-ref", "missing-release",
             "--plan", ".evidence/pr-home.json",
@@ -243,7 +243,7 @@ final class PullRequestComparisonTests: XCTestCase {
 
         XCTAssertThrowsError(try cli.execute([
             "capture-pr",
-            "--repo", "RiddimSoftware/epac",
+            "--repo", "ExampleOrg/ExampleApp",
             "--pr", "21",
             "--plan", ".evidence/pr-home.json",
             "--output", output.path
@@ -282,7 +282,7 @@ final class PullRequestComparisonTests: XCTestCase {
 
         try cli.execute([
             "capture-pr",
-            "--repo", "RiddimSoftware/epac",
+            "--repo", "ExampleOrg/ExampleApp",
             "--pr", "23",
             "--plan", ".evidence/pr-home.json",
             "--output", output.path
@@ -313,7 +313,7 @@ final class PullRequestComparisonTests: XCTestCase {
 
         XCTAssertThrowsError(try cli.execute([
             "capture-pr",
-            "--repo", "RiddimSoftware/epac",
+            "--repo", "ExampleOrg/ExampleApp",
             "--pr", "22",
             "--plan", ".evidence/pr-home.json",
             "--output", output.path
@@ -327,9 +327,9 @@ final class PullRequestComparisonTests: XCTestCase {
         let reportURL = output.appendingPathComponent("report.md")
         XCTAssertTrue(FileManager.default.fileExists(atPath: reportURL.path))
         let report = try String(contentsOf: reportURL, encoding: .utf8)
-        XCTAssertTrue(report.contains("[#22 Resolve visual evidence](https://github.com/RiddimSoftware/epac/pull/479)"))
+        XCTAssertTrue(report.contains("[#22 Resolve visual evidence](https://github.com/ExampleOrg/ExampleApp/pull/479)"))
         XCTAssertTrue(report.contains("- PR title: Resolve visual evidence"))
-        XCTAssertTrue(report.contains("- PR URL: https://github.com/RiddimSoftware/epac/pull/479"))
+        XCTAssertTrue(report.contains("- PR URL: https://github.com/ExampleOrg/ExampleApp/pull/479"))
         XCTAssertTrue(report.contains("- Before SHA: `\(baseSHA)`"))
         XCTAssertTrue(report.contains("- After SHA: `\(headSHA)`"))
         XCTAssertTrue(report.contains("- Runner mode: `simctl`"))
@@ -370,7 +370,7 @@ final class PullRequestComparisonTests: XCTestCase {
         let planURL = planDirectory.appendingPathComponent("pr-home.json")
         let json = """
         {
-          "repo": "RiddimSoftware/epac",
+          "repo": "ExampleOrg/ExampleApp",
           "pr": 1,
           "platform": "ios",
           "runner": "simctl",
@@ -403,7 +403,7 @@ final class PullRequestComparisonTests: XCTestCase {
         }
         return """
         {
-          "url": "https://github.com/RiddimSoftware/epac/pull/479",
+          "url": "https://github.com/ExampleOrg/ExampleApp/pull/479",
           "title": "Resolve visual evidence",
           "state": "\(state)",
           "baseRefName": "main",

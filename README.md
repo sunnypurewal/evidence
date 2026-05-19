@@ -2,33 +2,38 @@
 
 [![swift-test](https://github.com/RiddimSoftware/evidence/actions/workflows/swift-test.yml/badge.svg?branch=main)](https://github.com/RiddimSoftware/evidence/actions/workflows/swift-test.yml)
 [![Use on GitHub Marketplace](https://img.shields.io/badge/Marketplace-evidence-purple?logo=githubactions)](https://github.com/marketplace/actions/evidence)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-`evidence` captures repeatable proof that app flows work, using real iOS app runs instead of manual replay.
+`evidence` captures repeatable proof that app changes work. It turns real app runs into screenshots, videos, manifests, and reviewer-facing reports so a pull request can show generated artifacts instead of asking reviewers to trust a black-box coding loop.
 
-It is an open-source Swift package and companion CLI for screenshots, App Store assets, preview video sources, and build evidence from declarative plans.
+Evidence is an open-source Swift package, CLI, and reusable GitHub Action. It is currently iOS-first, with a web screenshot mode for Playwright-backed captures.
 
-## What It Does
+## What Evidence Does Today
 
-- Describes screenshot flows as `ScreenshotPlan` scenes, anchors, launch hooks, and navigation actions.
-- Writes captures to predictable output directories for review, release checks, and App Store source material.
-- Provides CLI workflows for screenshot capture, build evidence, resizing, marketing renders, and preview video encoding.
-- Captures before/after pull request evidence with screenshots, videos, a manifest, and a markdown report reviewers can read.
-- Uploads App Store screenshots from the same captured directory with dry-run planning and dimension checks.
-- Keeps app-specific plans, copy, brand data, and generated artifacts in the consuming app repository.
+- Describes iOS screenshot flows with `ScreenshotPlan` scenes, anchors, launch hooks, and navigation actions.
+- Runs screenshot, build-evidence, App Store screenshot, preview-video, marketing-render, web-capture, and before/after pull request evidence workflows from the CLI.
+- Writes artifacts to predictable directories that can be reviewed locally, uploaded as CI artifacts, or summarized in pull request comments.
+- Keeps app-specific plans, fixtures, credentials, copy, brand data, and generated artifacts in the consuming app repository.
+- Provides ready-to-copy GitHub Actions examples under [`Examples/workflows`](Examples/workflows).
+
+Evidence is not a hosted service, a release bot, a production deployment system, or a replacement for unit tests, UI tests, snapshot tests, human QA, or App Store review. It produces evidence artifacts; your app still owns the test data, launch state, simulator/device setup, and release decisions.
 
 ## Requirements
 
-- macOS 14 or newer
+- macOS 14 or newer for iOS capture workflows
 - Xcode and command line tools
 - Swift Package Manager
 - ImageMagick for `resize` and `render-marketing`
 - ffmpeg for `record-preview`
 - GitHub CLI (`gh`) for `capture-pr`
-- Fastlane if a consuming app still uses Fastlane snapshot around the capture workflow
+- Node.js with Playwright for local `capture-web` runs
 
 ```sh
 brew install imagemagick ffmpeg
+npm install playwright
 ```
+
+`capture-web` installs Playwright Chromium automatically when you use the bundled GitHub Action with `platform: web`.
 
 ## Quick Start
 
@@ -87,7 +92,7 @@ final class AppEvidenceTests: XCTestCase {
 
 Screenshots are written to `EVIDENCE_OUTPUT_DIR`, `APPSTORE_SCREENSHOT_DIR`, or `EvidenceOutput` in the current directory.
 
-For pull request comparisons, a UI test can load the same JSON evidence plan in both checked-out revisions instead of rebuilding the flow in Swift:
+For pull request comparisons, a UI test can load the same JSON evidence plan in both checked-out revisions:
 
 ```swift
 import Evidence
@@ -100,11 +105,13 @@ final class AppEvidenceTests: XCTestCase {
 }
 ```
 
-Set `EVIDENCE_PLAN_PATH` to the JSON plan path, or pass `--evidence-plan <path>` to the test process. Set `EVIDENCE_OUTPUT_DIR` to control where screenshots are written. When `EVIDENCE_REVISION_ROLE` is set, for example to `before` or `after`, the runner executes matching phased steps and groups screenshots under that revision directory. The app-side XCTest runner supports launch, accessibility waits, screenshots, tap, type text, swipe, and open URL steps. Video capture and process orchestration remain CLI responsibilities. Historical revisions still need this UI test harness in the app test target; fallback capture for revisions without it is not part of the current package API.
+Set `EVIDENCE_PLAN_PATH` to the JSON plan path, or pass `--evidence-plan <path>` to the test process. Set `EVIDENCE_OUTPUT_DIR` to control where screenshots are written. When `EVIDENCE_REVISION_ROLE` is set to `before` or `after`, the runner executes matching phased steps and groups screenshots under that revision directory.
+
+The XCTest runner supports launch, accessibility waits, screenshots, tap, type text, swipe, and open URL steps. Video capture and process orchestration remain CLI responsibilities. Historical revisions still need this UI test harness in the app test target; fallback UI automation for revisions without a harness is not part of the current package API.
 
 ## CLI Usage
 
-Create a `.evidence.toml` file in the project that will run evidence workflows:
+Create a `.evidence.toml` file in the app repository that will run Evidence workflows:
 
 ```toml
 scheme = "ExampleApp"
@@ -116,70 +123,50 @@ preview_targets = ["app-preview"]
 device_matrix = ["iPhone 16 Pro Max"]
 ```
 
-If the Xcode workspace or project that owns the screenshot UI tests is not at the directory where `evidence capture-screenshots` runs (for example, the iOS project lives in `ios/` while `.evidence.toml` lives at the repo root), set one of the optional fields below. The value is forwarded to `xcodebuild` as `-workspace` or `-project`. Set at most one:
+If the Xcode workspace or project that owns the screenshot UI tests is not at the directory where `evidence capture-screenshots` runs, set one of these optional fields:
 
 ```toml
-# Either:
 xcode_workspace = "ios/MyApp.xcworkspace"
-# Or:
+# or
 xcode_project = "ios/MyApp.xcodeproj"
 ```
 
-### xcresult bundles
+Set at most one. The value is forwarded to `xcodebuild` as `-workspace` or `-project`.
 
-`evidence capture-evidence` can also produce the matching `.xcresult` bundle from `xcodebuild test`, plus a markdown summary suitable for inlining in a pull request comment. Enable it in `.evidence.toml`:
-
-```toml
-xcresult_enabled = true
-xcresult_keep_full_bundle = true   # default; set false to ship only the summary
-```
-
-A run with `--ticket APP-123` then writes:
-
-- `<evidence_dir>/APP-123-running.png` (the screenshot, as before)
-- `<evidence_dir>/APP-123.xcresult`     (full bundle, openable in Xcode and `xcrun xcresulttool`)
-- `<evidence_dir>/APP-123-tests.md`     (totals, first three failures with `file:line`, total duration)
-
-When `xcresult_keep_full_bundle = false` (or the CLI flag `--xcresult-summary-only` is passed), the markdown summary stays in the evidence directory and the full bundle is moved to `~/.evidence/cache/APP-123.xcresult` so the bundle remains inspectable locally without bloating the repo.
-
-If `xcodebuild test` fails before the bundle is produced (for example, a build error), `<KEY>-tests.md` still gets written with a `Build error` excerpt so the PR comment surfaces what went wrong. The CLI exits non-zero in that case so CI catches the failure.
-
-> The conceptual `[xcresult]` table is exposed as flat keys (`xcresult_enabled`, `xcresult_keep_full_bundle`) because the project's TOML parser is intentionally lightweight. Behaviour is otherwise identical.
-
-Run the command that matches the workflow:
+Current CLI commands:
 
 ```sh
 evidence capture-screenshots
 evidence capture-evidence --ticket APP-123
 evidence capture-pr --repo ExampleOrg/ExampleApp --pr 123 --plan .evidence/pr-home.json --output docs/build-evidence/pr-123
+evidence capture-web
 evidence resize --input raw.png --target 6.9 --output app-store.png
 evidence record-preview --input capture.mov --output preview.mp4 --trim-start 0 --trim-end 30
 evidence render-marketing --scene scene.json --svg scene.svg --output scene.png
 evidence upload-screenshots --dry-run
 ```
 
-The CLI wraps Xcode simulator tooling, ImageMagick, and ffmpeg with explicit checks so missing local dependencies fail with actionable messages.
+The CLI wraps Xcode simulator tooling, ImageMagick, ffmpeg, Playwright, and App Store Connect APIs with explicit checks so missing local dependencies fail with actionable messages.
 
-`capture-pr` resolves a pull request's before/after revisions and prepares two isolated worktrees under `<output>/worktrees/` without switching the root checkout. For open PRs it uses the current base and head SHAs; for merged PRs it uses the merge commit and its first parent when available. Pass `--before-ref` or `--after-ref` to override either side.
+### Build Evidence and xcresult Summaries
 
-For iOS plans, `capture-pr` then builds each revision from its own worktree using the plan's `ios.workspace` or `ios.project`, `ios.scheme`, `ios.configuration`, `ios.destination`, and optional `ios.extra_xcodebuild_arguments`. DerivedData is isolated by revision under `<output>/derived-data/before` and `<output>/derived-data/after`, and build logs are written under `<output>/logs/`. The manifest records each build command, exit code, duration, stdout/stderr excerpts, app bundle path, DerivedData path, and log path.
+`evidence capture-evidence` captures a one-shot simulator screenshot into the configured `evidence_dir`.
 
-Plan execution runs the same steps for the before and after revisions. For `runner = "xctest"`, Evidence invokes `xcodebuild test` once per revision with `EVIDENCE_PLAN_PATH`, `EVIDENCE_OUTPUT_DIR`, and `EVIDENCE_REVISION_ROLE` in the test process environment so the app-side `EvidencePlanRunner` can replay the JSON plan. Screenshots land under revision-specific paths such as `<output>/before/home.png` and `<output>/after/home.png`. Video steps are recorded by CLI-managed simulator recording around the XCTest run and manifest under revision-specific paths such as `<output>/before/flow.mov` and `<output>/after/flow.mov`.
+When `xcresult_enabled = true` is set in `.evidence.toml`, the command also runs `xcodebuild test` with `-resultBundlePath` and writes:
 
-For launch-only `runner = "simctl"` plans, Evidence resolves the configured `ios.simulator_udid` or `ios.simulator`, boots and waits for the device, applies stable UI settings when the local simulator supports them, uninstalls the app by default to clear container state, installs the built app, and launches it with the plan's launch arguments and environment. Launch environment is injected as `SIMCTL_CHILD_<KEY>` variables for local simulator compatibility. The simctl runner supports launch, wait-by-seconds, screenshot, openURL, startVideo, and stopVideo steps. Screenshots and videos are written under revision directories such as `<output>/before/home.png`, `<output>/after/home.png`, `<output>/before/flow.mov`, and `<output>/after/flow.mov`. Set `ios.preserve_simulator_state` to `true` only when the before/after comparison intentionally needs shared app container state.
+- `<evidence_dir>/<KEY>.xcresult`
+- `<evidence_dir>/<KEY>-tests.md`
 
-The manifest includes build records, step results, artifact paths, revision roles, media types, file sizes when the artifact exists, capture timestamps, and failure summaries. If a capture step fails, the command exits non-zero after writing the partial manifest so a report can still explain which revision and step failed.
+Set `xcresult_keep_full_bundle = false` or pass `--xcresult-summary-only` to keep only the markdown summary in the evidence directory. The full bundle is moved to `~/.evidence/cache/<KEY>.xcresult` for local inspection without bloating the app repository.
 
 ### Pull Request Change Evidence
 
-Use `capture-pr` when a reviewer needs to see what a pull request changed, not just that the app still launches. The command compares a before revision and an after revision, runs the same evidence plan against both, and writes:
+Use `capture-pr` when a reviewer needs to see what a pull request changed. The command compares before and after revisions, runs the same evidence plan against both, and writes:
 
 - before/after screenshots under `<output>/before/` and `<output>/after/`
 - optional before/after simulator videos
-- `manifest.json` with the selected SHAs, build commands, step results, artifact paths, and failures
-- `report.md` with a reviewer-oriented summary of the status and changed evidence
-
-Local example from an app repository after adapting the sample plan:
+- `manifest.json` with selected SHAs, build commands, step results, artifact paths, and failures
+- `report.md` with a reviewer-oriented summary
 
 ```sh
 evidence capture-pr \
@@ -189,17 +176,49 @@ evidence capture-pr \
   --output docs/build-evidence/pr-123
 ```
 
-The reusable sample plan lives at [`Examples/pr-change-evidence-plan.json`](Examples/pr-change-evidence-plan.json). Copy it into the consuming app repository and replace the placeholder repo, PR number, Xcode project or workspace, scheme, bundle ID, simulator, and URL values. Keep the generated `docs/build-evidence/pr-123` output out of the Evidence repository unless the consuming app intentionally commits its own evidence.
+The reusable sample plan lives at [`Examples/pr-change-evidence-plan.json`](Examples/pr-change-evidence-plan.json). Copy it into the consuming app repository and replace the sample repo, PR number, Xcode project or workspace, scheme, bundle ID, simulator, and URL values. Keep generated evidence output in the consuming app repository or CI artifact store, not in this repository.
 
-`capture-pr` has two runner modes. `runner = "simctl"` is launch-only: it can launch the built app, open URLs, wait by seconds, take screenshots, and record start/stop video steps. Arbitrary UI actions such as tapping buttons, entering text, swiping, or waiting for accessibility elements require `runner = "xctest"` plus an app-side XCTest Evidence harness that reads `EVIDENCE_PLAN_PATH`, `EVIDENCE_OUTPUT_DIR`, and `EVIDENCE_REVISION_ROLE`. That harness belongs in the consuming app's UI test target because Evidence cannot know the app's fixtures, fake services, login state, or domain-specific navigation.
+`capture-pr` has two runner modes:
+
+- `runner = "simctl"` can launch the built app, open URLs, wait by seconds, take screenshots, and record start/stop video steps.
+- `runner = "xctest"` runs an app-side XCTest Evidence harness. Use it for taps, typing, swipes, and accessibility waits.
+
+### Web Capture
+
+Set `platform = "web"` in `.evidence.toml`:
+
+```toml
+platform = "web"
+web_url = "https://example.com"
+web_viewports = ["desktop-1440", "mobile-390"]
+web_full_page = true
+web_wait_until = "networkidle"
+evidence_dir = "docs/build-evidence/web"
+```
+
+Then run:
+
+```sh
+evidence capture-web
+```
+
+Named viewport presets include `desktop-1440` and `mobile-390`. Custom `WIDTHxHEIGHT` strings are also accepted.
+
+### Marketing Renders and Preview Videos
 
 Use raw capture when the screenshot should show the app exactly as it runs. Use `render-marketing` when the App Store asset needs a composed layout with headlines, badges, metrics, timelines, device framing, or source text around app imagery.
 
-Marketing scenes are JSON files with app-owned copy and brand values. See `Examples/Marketing/scene.json` for a complete example using the supported row kinds: `left`, `right`, `badge`, `metric`, `timeline`, `stage`, `row`, and `compose`.
+Marketing scenes are JSON files with app-owned copy and brand values. See [`Examples/Marketing/scene.json`](Examples/Marketing/scene.json) for a complete example.
+
+Use `record-preview` to encode a captured `.mov` into an App Preview-compatible H.264 `.mp4` with no audio:
+
+```sh
+evidence record-preview --input capture.mov --output preview.mp4
+```
 
 ### Upload to App Store Connect
 
-`evidence upload-screenshots` closes the loop from captured screenshots to App Store Connect screenshot slots. It scans PNGs under `evidence_dir`, validates their dimensions against the device target directory, plans create/replace/skip actions, and uploads changed screenshots through App Store Connect's resumable upload operations.
+`evidence upload-screenshots` scans PNGs under `evidence_dir`, validates their dimensions against the device target directory, plans create/replace/skip actions, and uploads changed screenshots through App Store Connect's resumable upload operations.
 
 Add App Store Connect API credentials to `.evidence.toml`:
 
@@ -229,34 +248,11 @@ evidence upload-screenshots --dry-run
 evidence upload-screenshots --dry-run --locale en-US
 ```
 
-The plan lists every slot, whether the content hash already matches (`✓`) or would change (`✗`), and the action (`create`, `replace`, or `skip`). A real upload deletes replaced screenshots, creates new screenshot resources, uploads the PNG bytes through the returned upload operations, and marks each screenshot uploaded.
-
-GitHub Actions example:
-
-```yaml
-jobs:
-  upload-screenshots:
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-      - name: Write App Store Connect key
-        shell: bash
-        env:
-          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
-        run: |
-          mkdir -p .secrets
-          printf '%s' "$ASC_PRIVATE_KEY" > .secrets/AuthKey_ABC123DEFG.p8
-      - uses: RiddimSoftware/evidence@v0
-        with:
-          subcommand: upload-screenshots
-          extra-args: '--dry-run'
-```
-
 ## Use in CI
 
-`evidence` ships a reusable GitHub Action so any iOS app repo can run the CLI on a hosted macOS runner without bootstrapping Xcode tooling, ImageMagick, or ffmpeg by hand. Pin to a major version for stability, or to a SHA for full reproducibility.
+Evidence ships a reusable GitHub Action so app repositories can run the CLI on public GitHub-hosted runners. Pin to a major version for stability, or to a SHA for full reproducibility.
 
-**iOS — capture build evidence on every PR:**
+**iOS build evidence on every PR:**
 
 ```yaml
 jobs:
@@ -275,7 +271,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-**iOS — capture before/after PR evidence:**
+**iOS before/after PR evidence:**
 
 ```yaml
 jobs:
@@ -297,7 +293,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-**Web — capture Playwright screenshots on every PR:**
+**Web screenshots on every PR:**
 
 ```yaml
 jobs:
@@ -318,36 +314,62 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-The Action accepts a `subcommand` input matching the CLI verb (`capture-screenshots`, `capture-evidence`, `capture-pr`, `capture-web`, `resize`, `render-marketing`, `record-preview`, `upload-screenshots`) along with passthrough inputs for `config`, `ticket`, `output-dir`, and `extra-args`. For `capture-pr`, use `plan` plus optional `pr`, `before-ref`, `after-ref`, `keep-worktrees`, and `summary-only`; pull request workflows default `pr`, `before-ref`, and `after-ref` from the GitHub event. Set `comment-on-pr: 'true'` and pass `github-token` to have the Action post a PR comment: standard captures list artifacts, while `capture-pr` summarizes `report.md` with status, before/after SHAs, artifact count, and the report path. The comment step is automatically skipped when no token is supplied or when the workflow does not run on a `pull_request` event.
+The Action accepts a `subcommand` input matching the CLI verb (`capture-screenshots`, `capture-evidence`, `capture-pr`, `capture-web`, `resize`, `render-marketing`, `record-preview`, `upload-screenshots`) along with passthrough inputs for `config`, `ticket`, `output-dir`, and `extra-args`. For `capture-pr`, use `plan` plus optional `pr`, `before-ref`, `after-ref`, `keep-worktrees`, and `summary-only`.
 
-The `platform` input selects the capture mode: `ios` (default) for iOS simulator captures on macOS runners, or `web` for Playwright Chromium screenshots on any runner (including `ubuntu-latest`). When `platform: web`, Node.js 20 and the Playwright Chromium browser are installed and cached automatically.
+Set `comment-on-pr: 'true'` and pass `github-token` to post a PR comment. Standard captures list produced artifacts; `capture-pr` summarizes `report.md` with status, before/after SHAs, artifact count, and the report path. The comment step is skipped when no token is supplied or when the workflow does not run on a `pull_request` event.
 
-ImageMagick and ffmpeg are installed and cached the first time the Action runs on an iOS runner, so warm runs reuse the formula tarballs. The `evidence` CLI itself is built once per release ref and cached under `~/runner.temp/evidence-build/.build`.
+Four ready-to-copy workflows live under [`Examples/workflows`](Examples/workflows):
 
-Four ready-to-copy workflows live under [`Examples/workflows/`](Examples/workflows/):
+- `capture-evidence-on-pr.yml`
+- `capture-pr-on-pr.yml`
+- `capture-screenshots-on-tag.yml`
+- `capture-web-on-pr.yml`
 
-- `capture-evidence-on-pr.yml` — captures a screenshot per pull request, posts it as a PR comment, and uploads it as an artifact.
-- `capture-pr-on-pr.yml` — captures before/after PR evidence, posts a concise report comment, and uploads the evidence bundle as an artifact.
-- `capture-screenshots-on-tag.yml` — captures the full App Store screenshot matrix when you push a release tag.
-- `capture-web-on-pr.yml` — starts a local HTTP server and captures Playwright web screenshots on every PR, posting a comment with the results.
+## Privacy and Security
 
-Marketplace listing: <https://github.com/marketplace/actions/evidence>. The iOS platform requires `macos-14` or newer; the web platform runs on any runner with Node.js available (including `ubuntu-latest`).
+Evidence intentionally keeps app-specific plans and generated artifacts in the consuming repository or CI artifact store. Before publishing artifacts, review them for customer data, unreleased product details, credentials, private URLs, and environment-specific paths.
+
+Recommended defaults:
+
+- Keep `.p8` files, API keys, fixture databases, and generated evidence bundles out of git unless they are intentionally sanitized examples.
+- Use `upload-screenshots --dry-run` before mutating App Store Connect.
+- Use GitHub-hosted runners for public pull request workflows.
+- Treat PR comments and uploaded artifacts as public when the repository is public.
+- Report vulnerabilities privately; see [`SECURITY.md`](SECURITY.md).
+
+## Riddim Software Factory Context
+
+Evidence is the artifact layer in the Riddim Software Factory narrative. Autonomous coding can change an app, but reviewers still need concrete proof that the app satisfies the requirement. Evidence produces that proof as generated artifacts: screenshots, videos, manifests, and reports tied to the pull request or release flow.
+
+The goal is modest and auditable: make claims about app behavior traceable to repeatable captures that another builder can inspect.
+
+## Repository Metadata
+
+The repository metadata that requires the GitHub UI is tracked separately from code changes:
+
+- Description: `Repeatable proof artifacts for app changes: screenshots, videos, manifests, and reports from real app runs.`
+- Topics: `swift`, `ios`, `xctest`, `github-actions`, `app-store`, `visual-testing`, `automation`
+- Homepage: GitHub Marketplace listing or the public launch article once available
+- License: MIT
+
+These settings should be verified after the repository visibility is changed to public. See [`docs/repository-metadata.md`](docs/repository-metadata.md).
 
 ## Documentation
 
-- `docs/troubleshooting.md` covers common simulator, permissions, dependency, and output-path problems.
-- `docs/versioning.md` describes the v0.x stability policy and release-note expectations.
-- `docs/launch/README.md` contains public launch materials: blog draft, social posts, demo script, HN draft, and checklist.
-- `CONTRIBUTING.md` explains how to report issues and open pull requests safely in a public repository.
-- `Examples/README.md` describes the shipped GitHub Action examples and fixture project.
+- [`Examples/README.md`](Examples/README.md) explains the Action examples and PR evidence plan fixture.
+- [`docs/troubleshooting.md`](docs/troubleshooting.md) covers simulator, permissions, dependency, and output-path problems.
+- [`docs/versioning.md`](docs/versioning.md) describes the v0.x stability policy.
+- [`docs/launch/README.md`](docs/launch/README.md) contains public launch materials aligned with the current CLI.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) explains safe contribution guidelines.
 
 ## Development
 
 ```sh
 swift test
 swift run evidence -- --help
+actionlint .github/workflows/*.yml Examples/workflows/*.yml
 ```
 
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [`LICENSE`](LICENSE).

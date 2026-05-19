@@ -49,9 +49,8 @@ public struct EvidenceCLI {
             return 0
         } catch {
             stderr((error as? LocalizedError)?.errorDescription ?? String(describing: error))
-            // Honor `CLIError.exit(code, ...)` so subcommands like
-            // `evidence diff` can return CI-stable exit codes (1 = regression,
-            // 2 = baseline missing). All other errors fall back to 1.
+            // Honor `CLIError.exit(code, ...)` for subcommands that need
+            // CI-stable exit codes. All other errors fall back to 1.
             if let cliError = error as? CLIError {
                 return cliError.exitCode
             }
